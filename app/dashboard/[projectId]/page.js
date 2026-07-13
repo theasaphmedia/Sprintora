@@ -51,6 +51,11 @@ export default function ProjectBoardPage() {
   const [invites, setInvites] = useState([]);
   const [resendingId, setResendingId] = useState(null);
   const [resendMsg, setResendMsg] = useState({});
+  const [selectedTaskId, setSelectedTaskId] = useState(null);
+  const [comments, setComments] = useState([]);
+  const [commentsError, setCommentsError] = useState("");
+  const [newComment, setNewComment] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
 
   useEffect(() => {
     if (loading) return;
@@ -145,6 +150,66 @@ export default function ProjectBoardPage() {
     return () => unsub();
   }, [user, project, projectId]);
 
+  useEffect(() => {
+    if (!selectedTaskId) {
+      setComments([]);
+      setCommentsError("");
+      return;
+    }
+    const q = query(
+      collection(db, "projects", projectId, "tasks", selectedTaskId, "comments"),
+      orderBy("createdAt", "asc")
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setCommentsError("");
+        setComments(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => {
+        console.error("Failed to load comments", err);
+        setCommentsError("Couldn't load comments. Please try again.");
+      }
+    );
+    return () => unsub();
+  }, [selectedTaskId, projectId]);
+
+  async function handleAddComment(e) {
+    e.preventDefault();
+    if (!newComment.trim() || !selectedTaskId) return;
+    setCommentBusy(true);
+    try {
+      await addDoc(
+        collection(db, "projects", projectId, "tasks", selectedTaskId, "comments"),
+        {
+          text: newComment.trim(),
+          authorId: user.uid,
+          authorName: user.displayName || "",
+          authorEmail: user.email || "",
+          createdAt: serverTimestamp(),
+        }
+      );
+      setNewComment("");
+    } catch (err) {
+      console.error("Failed to add comment", err);
+      window.alert("Couldn't post that comment. Please try again.");
+    } finally {
+      setCommentBusy(false);
+    }
+  }
+
+  async function handleDeleteComment(commentId) {
+    if (!selectedTaskId) return;
+    try {
+      await deleteDoc(
+        doc(db, "projects", projectId, "tasks", selectedTaskId, "comments", commentId)
+      );
+    } catch (err) {
+      console.error("Failed to delete comment", err);
+      window.alert("Couldn't delete that comment. Please try again.");
+    }
+  }
+
   async function handleAddTask(e) {
     e.preventDefault();
     if (!newTitle.trim()) return;
@@ -180,6 +245,7 @@ export default function ProjectBoardPage() {
   async function removeTask(taskId) {
     try {
       await deleteDoc(doc(db, "projects", projectId, "tasks", taskId));
+      if (selectedTaskId === taskId) setSelectedTaskId(null);
     } catch (err) {
       console.error("Failed to delete task", err);
       window.alert("Couldn't delete that task. Please try again.");
@@ -352,16 +418,28 @@ export default function ProjectBoardPage() {
                   {tasks
                     .filter((t) => t.status === col.key)
                     .map((t) => (
-                      <div className="task-card" key={t.id}>
+                      <div
+                        className="task-card"
+                        key={t.id}
+                        onClick={() => setSelectedTaskId(t.id)}
+                        style={{ cursor: "pointer" }}
+                      >
                         {t.title}
                         <div className="task-actions">
                           {colIdx > 0 && (
-                            <button onClick={() => moveTask(t.id, -1)}>&larr; Move</button>
+                            <button onClick={(e) => { e.stopPropagation(); moveTask(t.id, -1); }}>
+                              &larr; Move
+                            </button>
                           )}
                           {colIdx < COLUMNS.length - 1 && (
-                            <button onClick={() => moveTask(t.id, 1)}>Move &rarr;</button>
+                            <button onClick={(e) => { e.stopPropagation(); moveTask(t.id, 1); }}>
+                              Move &rarr;
+                            </button>
                           )}
-                          <button className="danger" onClick={() => removeTask(t.id)}>
+                          <button
+                            className="danger"
+                            onClick={(e) => { e.stopPropagation(); removeTask(t.id); }}
+                          >
                             Delete
                           </button>
                         </div>
@@ -470,6 +548,92 @@ export default function ProjectBoardPage() {
           </div>
         )}
       </div>
+
+      {selectedTaskId && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15, 23, 42, 0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+          }}
+          onClick={() => setSelectedTaskId(null)}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: 10,
+              padding: 24,
+              width: "min(480px, 90vw)",
+              maxHeight: "80vh",
+              display: "flex",
+              flexDirection: "column",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+              <h3 style={{ fontSize: 18 }}>
+                {tasks.find((t) => t.id === selectedTaskId)?.title || "Task"}
+              </h3>
+              <button className="btn btn-sm btn-secondary" onClick={() => setSelectedTaskId(null)}>
+                Close
+              </button>
+            </div>
+
+            <h4 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--slate-500)", marginBottom: 10 }}>
+              Comments
+            </h4>
+
+            {commentsError && (
+              <p style={{ color: "var(--red)", fontSize: 13, marginBottom: 8 }}>{commentsError}</p>
+            )}
+
+            <div style={{ overflowY: "auto", flex: 1, marginBottom: 12 }}>
+              {comments.length === 0 && !commentsError && (
+                <p style={{ color: "var(--slate-500)", fontSize: 13 }}>No comments yet.</p>
+              )}
+              {comments.map((c) => (
+                <div key={c.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #eee" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>
+                      {c.authorName || c.authorEmail || "Someone"}
+                    </span>
+                    {c.authorId === user.uid && (
+                      <button
+                        style={{
+                          fontSize: 12,
+                          color: "var(--red)",
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                        }}
+                        onClick={() => handleDeleteComment(c.id)}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                  <p style={{ fontSize: 14, marginTop: 4, whiteSpace: "pre-wrap" }}>{c.text}</p>
+                </div>
+              ))}
+            </div>
+
+            <form onSubmit={handleAddComment} className="comment-form" style={{ display: "flex", gap: 8 }}>
+              <input
+                placeholder="Add a comment..."
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+              />
+              <button className="btn btn-primary" type="submit" disabled={commentBusy}>
+                {commentBusy ? "Posting..." : "Post"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

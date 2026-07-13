@@ -103,6 +103,24 @@ service cloud.firestore {
       match /tasks/{taskId} {
         allow read, create, update, delete: if request.auth != null
           && request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.memberIds;
+
+        // --- comments (subcollection of tasks) ---
+        // Any project member can read and post comments. Comments are
+        // immutable once posted (no update rule — not even by the author,
+        // to keep this simple for now) but the author can delete their own.
+        // No one else, not even the project owner, can delete someone
+        // else's comment yet — that's a moderation feature to add later if
+        // actually needed, not assumed now.
+        match /comments/{commentId} {
+          allow read: if request.auth != null
+            && request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.memberIds;
+          allow create: if request.auth != null
+            && request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.memberIds
+            && request.resource.data.authorId == request.auth.uid;
+          allow update: if false;
+          allow delete: if request.auth != null
+            && resource.data.authorId == request.auth.uid;
+        }
       }
     }
   }

@@ -157,6 +157,9 @@ footer a{color:rgba(255,255,255,0.8);}
 .danger-zone{margin-top:36px;padding-top:24px;border-top:1px solid var(--slate-200);}
 .danger-zone h4{font-size:14px;color:var(--red);margin-bottom:10px;}
 
+.comment-form input{flex:1;padding:9px 11px;border:1px solid var(--slate-300);border-radius:8px;font-size:13px;}
+.comment-form input:focus{outline:2px solid var(--blue);outline-offset:1px;}
+
 @media (max-width:900px){
   .hero-inner{grid-template-columns:1fr;}
   .features-grid,.pricing-grid,.board{grid-template-columns:1fr;}
