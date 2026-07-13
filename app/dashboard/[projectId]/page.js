@@ -238,6 +238,27 @@ export default function ProjectBoardPage() {
     }
   }
 
+  // Self-removal ("Leave project"). Distinct from removeMember: the security
+  // rules only allow a member to remove themselves (not anyone else), and
+  // once it succeeds the caller immediately loses read access to this
+  // project doc (the read rule requires being in memberIds), so — unlike
+  // an owner removing someone else — this has to navigate the leaving
+  // member away rather than just letting the page re-render in place.
+  async function handleLeaveProject() {
+    if (!window.confirm(`Leave "${project.name}"? You'll lose access unless you're invited back.`)) {
+      return;
+    }
+    try {
+      await updateDoc(doc(db, "projects", projectId), {
+        memberIds: arrayRemove(user.uid),
+      });
+      router.push("/dashboard");
+    } catch (err) {
+      console.error("Failed to leave project", err);
+      window.alert("Couldn't leave the project. Please try again.");
+    }
+  }
+
   async function handleDeleteProject() {
     if (!window.confirm(`Delete "${project.name}"? This cannot be undone.`)) return;
     try {
@@ -416,6 +437,11 @@ export default function ProjectBoardPage() {
                     {isOwner && m.uid !== project.ownerId && (
                       <button className="btn btn-sm btn-secondary" onClick={() => removeMember(m.uid)}>
                         Remove
+                      </button>
+                    )}
+                    {!isOwner && m.uid === user.uid && (
+                      <button className="btn btn-sm btn-secondary" onClick={handleLeaveProject}>
+                        Leave
                       </button>
                     )}
                   </div>
