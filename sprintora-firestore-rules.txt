@@ -1,0 +1,102 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- users ---
+    // Any signed-in user can read any user profile (needed to look up
+    // teammates by email when inviting, and to show names on the team
+    // panel). Each user can only create/edit their own profile document.
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == uid;
+      allow update: if request.auth != null && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // --- invites ---
+    // Only the current OWNER of a project may create an invite for it
+    // (invitedBy must be their own uid, and they must own projectId —
+    // otherwise anyone could invite themselves into any project and use
+    // that invite to self-join below). An invite can only be read by the
+    // person who sent it or the person it was sent to (matched by email
+    // on their auth token). Only the invitee can update it (to accept).
+    //
+    // Reading/accepting an invite by email match additionally requires
+    // request.auth.token.email_verified == true. Firebase does not verify
+    // ownership of an email at password sign-up, so without this check
+    // anyone could sign up claiming someone else's email address and
+    // hijack any invite sent to it. Google sign-in already sets
+    // email_verified true automatically, so this doesn't affect that flow.
+    match /invites/{inviteId} {
+      allow create: if request.auth != null
+                    && request.resource.data.invitedBy == request.auth.uid
+                    && request.auth.uid == get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.ownerId;
+      allow read: if request.auth != null
+                  && ((resource.data.email == request.auth.token.email
+                       && request.auth.token.email_verified == true)
+                      || resource.data.invitedBy == request.auth.uid);
+      allow update: if request.auth != null
+                    && request.auth.token.email_verified == true
+                    && resource.data.email == request.auth.token.email;
+      allow delete: if false;
+    }
+
+    // --- projects ---
+    match /projects/{projectId} {
+      allow create: if request.auth != null
+                    && request.resource.data.ownerId == request.auth.uid
+                    && request.resource.data.memberIds == [request.auth.uid];
+
+      allow read: if request.auth != null
+                  && request.auth.uid in resource.data.memberIds;
+
+      // Update is allowed for three cases only:
+      // 1) the OWNER changing anything except ownerId itself (add/remove
+      //    members, rename, etc. — ownership transfer isn't a feature yet,
+      //    so ownerId can never move via update).
+      // 2) any current member removing ONLY themselves from memberIds
+      //    (leaving the project) — no other field, and no one else's
+      //    membership, may change in the same write.
+      // 3) a NON-member self-joining by adding exactly themselves to
+      //    memberIds, and ONLY if a real, matching, pending invite exists
+      //    for this project + their email (looked up by deterministic
+      //    invite doc ID, not just trusting the shape of the write), AND
+      //    their auth token's email is verified (see note on /invites —
+      //    prevents joining via an invite sent to an email the requester
+      //    merely typed at signup without proving they own it).
+      allow update: if request.auth != null && (
+        (
+          request.auth.uid == resource.data.ownerId
+          && request.resource.data.ownerId == resource.data.ownerId
+        )
+        || (
+          request.auth.uid in resource.data.memberIds
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds'])
+          && request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1
+          && resource.data.memberIds.hasAll(request.resource.data.memberIds)
+          && !(request.auth.uid in request.resource.data.memberIds)
+        )
+        || (
+          !(request.auth.uid in resource.data.memberIds)
+          && request.auth.token.email_verified == true
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds', 'roles'])
+          && request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1
+          && request.resource.data.memberIds.hasAll(resource.data.memberIds)
+          && request.auth.uid in request.resource.data.memberIds
+          && exists(/databases/$(database)/documents/invites/$(projectId + '_' + request.auth.token.email))
+          && get(/databases/$(database)/documents/invites/$(projectId + '_' + request.auth.token.email)).data.status == 'pending'
+          && get(/databases/$(database)/documents/invites/$(projectId + '_' + request.auth.token.email)).data.email == request.auth.token.email
+        )
+      );
+
+      allow delete: if request.auth != null
+                    && request.auth.uid == resource.data.ownerId;
+
+      // --- tasks (subcollection) ---
+      match /tasks/{taskId} {
+        allow read, create, update, delete: if request.auth != null
+          && request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.memberIds;
+      }
+    }
+  }
+}
