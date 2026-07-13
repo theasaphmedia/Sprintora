@@ -19,7 +19,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../../../lib/firebase";
 import { useAuth } from "../../../lib/useAuth";
-import { inviteTeammate } from "../../../lib/invites";
+import { inviteTeammate, resendInvite } from "../../../lib/invites";
 
 const COLUMNS = [
   { key: "todo", label: "To Do" },
@@ -42,6 +42,8 @@ export default function ProjectBoardPage() {
   const [inviteBusy, setInviteBusy] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [invites, setInvites] = useState([]);
+  const [resendingId, setResendingId] = useState(null);
+  const [resendMsg, setResendMsg] = useState({});
 
   useEffect(() => {
     if (loading) return;
@@ -189,16 +191,35 @@ export default function ProjectBoardPage() {
         email: inviteEmail,
         invitedBy: user.uid,
       });
-      setInviteMsg(
+      const base =
         result.status === "added"
           ? "Added — they already have a Sprintora account."
-          : "Invite saved — they'll be added automatically when they sign up with this email."
+          : "Invite saved — they'll be added automatically when they sign up with this email.";
+      setInviteMsg(
+        result.emailResult?.ok
+          ? `${base} Notification email sent.`
+          : `${base} (Email not sent: ${result.emailResult?.error || "unknown error"} — use Resend below to retry.)`
       );
       setInviteEmail("");
     } catch (err) {
-      setInviteMsg("Something went wrong sending that invite.");
+      console.error("Failed to save invite", err);
+      setInviteMsg(`Something went wrong saving that invite: ${err?.message || "unknown error"}`);
     } finally {
       setInviteBusy(false);
+    }
+  }
+
+  async function handleResend(invite) {
+    setResendingId(invite.id);
+    setResendMsg((m) => ({ ...m, [invite.id]: "" }));
+    try {
+      const result = await resendInvite(invite);
+      setResendMsg((m) => ({
+        ...m,
+        [invite.id]: result.ok ? "Email sent." : `Failed: ${result.error || "unknown error"}`,
+      }));
+    } finally {
+      setResendingId(null);
     }
   }
 
@@ -343,20 +364,36 @@ export default function ProjectBoardPage() {
                 </h4>
                 <div className="member-list">
                   {invites.map((inv) => (
-                    <div className="member-row" key={inv.id}>
-                      <div className="member-info">
-                        <span className="member-email">{inv.email}</span>
+                    <div className="member-row" key={inv.id} style={{ flexDirection: "column", alignItems: "stretch" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+                        <div className="member-info">
+                          <span className="member-email">{inv.email}</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <span
+                            className="role-badge"
+                            style={
+                              inv.status === "accepted"
+                                ? { background: "#dcfce7", color: "var(--green)" }
+                                : { background: "#fef3c7", color: "var(--amber)" }
+                            }
+                          >
+                            {inv.status}
+                          </span>
+                          <button
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => handleResend(inv)}
+                            disabled={resendingId === inv.id}
+                          >
+                            {resendingId === inv.id ? "Resending..." : "Resend"}
+                          </button>
+                        </div>
                       </div>
-                      <span
-                        className="role-badge"
-                        style={
-                          inv.status === "accepted"
-                            ? { background: "#dcfce7", color: "var(--green)" }
-                            : { background: "#fef3c7", color: "var(--amber)" }
-                        }
-                      >
-                        {inv.status}
-                      </span>
+                      {resendMsg[inv.id] && (
+                        <p style={{ fontSize: 12, color: "var(--slate-500)", marginTop: 4 }}>
+                          {resendMsg[inv.id]}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
