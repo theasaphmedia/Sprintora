@@ -19,13 +19,20 @@ import {
 } from "firebase/firestore";
 import { db } from "../../../lib/firebase";
 import { useAuth } from "../../../lib/useAuth";
-import { inviteTeammate, resendInvite } from "../../../lib/invites";
+import { inviteTeammate, resendInvite, markInviteStatus } from "../../../lib/invites";
 
 const COLUMNS = [
   { key: "todo", label: "To Do" },
   { key: "in_progress", label: "In Progress" },
   { key: "done", label: "Done" },
 ];
+
+const INVITE_STATUS_STYLES = {
+  pending: { background: "#fef3c7", color: "var(--amber)" },
+  accepted: { background: "#dcfce7", color: "var(--green)" },
+  left: { background: "#e2e8f0", color: "var(--slate-500)" },
+  removed: { background: "#fee2e2", color: "var(--red)" },
+};
 
 export default function ProjectBoardPage() {
   const { projectId } = useParams();
@@ -232,6 +239,10 @@ export default function ProjectBoardPage() {
       await updateDoc(doc(db, "projects", projectId), {
         memberIds: arrayRemove(uid),
       });
+      const removed = members.find((m) => m.uid === uid);
+      if (removed?.email) {
+        await markInviteStatus(projectId, removed.email, "removed");
+      }
     } catch (err) {
       console.error("Failed to remove member", err);
       window.alert("Couldn't remove that member. Please try again.");
@@ -252,6 +263,9 @@ export default function ProjectBoardPage() {
       await updateDoc(doc(db, "projects", projectId), {
         memberIds: arrayRemove(user.uid),
       });
+      if (user.email) {
+        await markInviteStatus(projectId, user.email, "left");
+      }
       router.push("/dashboard");
     } catch (err) {
       console.error("Failed to leave project", err);
@@ -393,11 +407,7 @@ export default function ProjectBoardPage() {
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <span
                             className="role-badge"
-                            style={
-                              inv.status === "accepted"
-                                ? { background: "#dcfce7", color: "var(--green)" }
-                                : { background: "#fef3c7", color: "var(--amber)" }
-                            }
+                            style={INVITE_STATUS_STYLES[inv.status] || INVITE_STATUS_STYLES.pending}
                           >
                             {inv.status}
                           </span>

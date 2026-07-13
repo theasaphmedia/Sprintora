@@ -19,7 +19,11 @@ service cloud.firestore {
     // otherwise anyone could invite themselves into any project and use
     // that invite to self-join below). An invite can only be read by the
     // person who sent it or the person it was sent to (matched by email
-    // on their auth token). Only the invitee can update it (to accept).
+    // on their auth token). Update is allowed for either the invitee
+    // (accepting, or self-marking "left" on leaving) OR the original
+    // inviter (marking "removed" when they remove someone, or re-inviting
+    // via setDoc on an already-existing doc, which Firestore treats as an
+    // update, not a create).
     //
     // Reading/accepting an invite by email match additionally requires
     // request.auth.token.email_verified == true. Firebase does not verify
@@ -36,8 +40,11 @@ service cloud.firestore {
                        && request.auth.token.email_verified == true)
                       || resource.data.invitedBy == request.auth.uid);
       allow update: if request.auth != null
-                    && request.auth.token.email_verified == true
-                    && resource.data.email == request.auth.token.email;
+                    && (
+                      (request.auth.token.email_verified == true
+                       && resource.data.email == request.auth.token.email)
+                      || resource.data.invitedBy == request.auth.uid
+                    );
       allow delete: if false;
     }
 
