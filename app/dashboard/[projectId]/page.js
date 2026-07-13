@@ -34,6 +34,38 @@ const INVITE_STATUS_STYLES = {
   removed: { background: "#fee2e2", color: "var(--red)" },
 };
 
+const COLUMN_LABELS = Object.fromEntries(COLUMNS.map((c) => [c.key, c.label]));
+
+function formatActivityText(item) {
+  if (item.type === "created") return "created this task";
+  if (item.type === "moved") {
+    const from = COLUMN_LABELS[item.fromStatus] || item.fromStatus;
+    const to = COLUMN_LABELS[item.toStatus] || item.toStatus;
+    return `moved this from ${from} to ${to}`;
+  }
+  return "made a change";
+}
+
+// Merges the comment thread and the system activity log into one
+// chronological timeline for the task detail view. Firestore can't
+// natively order two different subcollections together, so this is done
+// client-side. createdAt is a serverTimestamp() and briefly reads back as
+// null on the client before the server round-trip confirms it — falling
+// back to "now" for sorting purposes just means a just-posted item shows
+// up at the end until the real timestamp arrives a moment later.
+function buildTimeline(comments, activity) {
+  const items = [
+    ...comments.map((c) => ({ ...c, kind: "comment" })),
+    ...activity.map((a) => ({ ...a, kind: "activity" })),
+  ];
+  items.sort((a, b) => {
+    const aMillis = a.createdAt?.toMillis?.() ?? Date.now();
+    const bMillis = b.createdAt?.toMillis?.() ?? Date.now();
+    return aMillis - bMillis;
+  });
+  return items;
+}
+
 export default function ProjectBoardPage() {
   const { projectId } = useParams();
   const { user, loading } = useAuth();
@@ -56,6 +88,7 @@ export default function ProjectBoardPage() {
   const [commentsError, setCommentsError] = useState("");
   const [newComment, setNewComment] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
+  const [activity, setActivity] = useState([]);
 
   useEffect(() => {
     if (loading) return;
@@ -174,6 +207,44 @@ export default function ProjectBoardPage() {
     return () => unsub();
   }, [selectedTaskId, projectId]);
 
+  useEffect(() => {
+    if (!selectedTaskId) {
+      setActivity([]);
+      return;
+    }
+    const q = query(
+      collection(db, "projects", projectId, "tasks", selectedTaskId, "activity"),
+      orderBy("createdAt", "asc")
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setActivity(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => {
+        console.error("Failed to load activity", err);
+      }
+    );
+    return () => unsub();
+  }, [selectedTaskId, projectId]);
+
+  // Best-effort system-log write. Never throws — a failed activity-log
+  // entry shouldn't undo the actual task write it's describing, which
+  // already succeeded by the time this is called.
+  async function logActivity(taskId, entry) {
+    try {
+      await addDoc(collection(db, "projects", projectId, "tasks", taskId, "activity"), {
+        ...entry,
+        actorId: user.uid,
+        actorName: user.displayName || "",
+        actorEmail: user.email || "",
+        createdAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Failed to log activity", err);
+    }
+  }
+
   async function handleAddComment(e) {
     e.preventDefault();
     if (!newComment.trim() || !selectedTaskId) return;
@@ -214,12 +285,13 @@ export default function ProjectBoardPage() {
     e.preventDefault();
     if (!newTitle.trim()) return;
     try {
-      await addDoc(collection(db, "projects", projectId, "tasks"), {
+      const ref = await addDoc(collection(db, "projects", projectId, "tasks"), {
         title: newTitle.trim(),
         status: "todo",
         createdAt: serverTimestamp(),
       });
       setNewTitle("");
+      logActivity(ref.id, { type: "created" });
     } catch (err) {
       console.error("Failed to add task", err);
       window.alert("Couldn't add that task. Please try again.");
@@ -232,10 +304,12 @@ export default function ProjectBoardPage() {
     const colIdx = COLUMNS.findIndex((c) => c.key === currentStatus);
     const nextIdx = colIdx + direction;
     if (nextIdx < 0 || nextIdx >= COLUMNS.length) return;
+    const nextStatus = COLUMNS[nextIdx].key;
     try {
       await updateDoc(doc(db, "projects", projectId, "tasks", taskId), {
-        status: COLUMNS[nextIdx].key,
+        status: nextStatus,
       });
+      logActivity(taskId, { type: "moved", fromStatus: currentStatus, toStatus: nextStatus });
     } catch (err) {
       console.error("Failed to move task", err);
       window.alert("Couldn't move that task. Please try again.");
@@ -244,6 +318,18 @@ export default function ProjectBoardPage() {
 
   async function removeTask(taskId) {
     try {
+      // Same orphan-data issue fixed earlier for whole-project deletion:
+      // Firestore never cascade-deletes subcollections, so deleting the
+      // task doc alone would leave its comments and activity log behind
+      // forever as invisible, unreachable documents. Clean those up first.
+      const [commentsSnap, activitySnap] = await Promise.all([
+        getDocs(collection(db, "projects", projectId, "tasks", taskId, "comments")),
+        getDocs(collection(db, "projects", projectId, "tasks", taskId, "activity")),
+      ]);
+      await Promise.all([
+        ...commentsSnap.docs.map((d) => deleteDoc(d.ref)),
+        ...activitySnap.docs.map((d) => deleteDoc(d.ref)),
+      ]);
       await deleteDoc(doc(db, "projects", projectId, "tasks", taskId));
       if (selectedTaskId === taskId) setSelectedTaskId(null);
     } catch (err) {
@@ -344,9 +430,24 @@ export default function ProjectBoardPage() {
     try {
       // Firestore never cascade-deletes subcollections: deleting the project
       // doc alone leaves every task underneath it as an orphaned, invisible
-      // document taking up storage forever. Clean those up first.
+      // document taking up storage forever — and each task now has its own
+      // comments and activity subcollections one level deeper, which have
+      // the exact same problem. Clean up bottom-up: comments/activity for
+      // every task, then the tasks themselves, then the project.
       const tasksSnap = await getDocs(collection(db, "projects", projectId, "tasks"));
-      await Promise.all(tasksSnap.docs.map((t) => deleteDoc(t.ref)));
+      await Promise.all(
+        tasksSnap.docs.map(async (t) => {
+          const [commentsSnap, activitySnap] = await Promise.all([
+            getDocs(collection(db, "projects", projectId, "tasks", t.id, "comments")),
+            getDocs(collection(db, "projects", projectId, "tasks", t.id, "activity")),
+          ]);
+          await Promise.all([
+            ...commentsSnap.docs.map((d) => deleteDoc(d.ref)),
+            ...activitySnap.docs.map((d) => deleteDoc(d.ref)),
+          ]);
+          await deleteDoc(t.ref);
+        })
+      );
       await deleteDoc(doc(db, "projects", projectId));
       router.push("/dashboard");
     } catch (err) {
@@ -584,7 +685,7 @@ export default function ProjectBoardPage() {
             </div>
 
             <h4 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--slate-500)", marginBottom: 10 }}>
-              Comments
+              Activity
             </h4>
 
             {commentsError && (
@@ -592,33 +693,39 @@ export default function ProjectBoardPage() {
             )}
 
             <div style={{ overflowY: "auto", flex: 1, marginBottom: 12 }}>
-              {comments.length === 0 && !commentsError && (
-                <p style={{ color: "var(--slate-500)", fontSize: 13 }}>No comments yet.</p>
+              {buildTimeline(comments, activity).length === 0 && !commentsError && (
+                <p style={{ color: "var(--slate-500)", fontSize: 13 }}>Nothing here yet.</p>
               )}
-              {comments.map((c) => (
-                <div key={c.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #eee" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>
-                      {c.authorName || c.authorEmail || "Someone"}
-                    </span>
-                    {c.authorId === user.uid && (
-                      <button
-                        style={{
-                          fontSize: 12,
-                          color: "var(--red)",
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                        }}
-                        onClick={() => handleDeleteComment(c.id)}
-                      >
-                        Delete
-                      </button>
-                    )}
+              {buildTimeline(comments, activity).map((item) =>
+                item.kind === "comment" ? (
+                  <div key={item.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #eee" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>
+                        {item.authorName || item.authorEmail || "Someone"}
+                      </span>
+                      {item.authorId === user.uid && (
+                        <button
+                          style={{
+                            fontSize: 12,
+                            color: "var(--red)",
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                          }}
+                          onClick={() => handleDeleteComment(item.id)}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                    <p style={{ fontSize: 14, marginTop: 4, whiteSpace: "pre-wrap" }}>{item.text}</p>
                   </div>
-                  <p style={{ fontSize: 14, marginTop: 4, whiteSpace: "pre-wrap" }}>{c.text}</p>
-                </div>
-              ))}
+                ) : (
+                  <p key={item.id} style={{ fontSize: 12, color: "var(--slate-500)", fontStyle: "italic", marginBottom: 10 }}>
+                    {item.actorName || item.actorEmail || "Someone"} {formatActivityText(item)}
+                  </p>
+                )
+              )}
             </div>
 
             <form onSubmit={handleAddComment} className="comment-form" style={{ display: "flex", gap: 8 }}>

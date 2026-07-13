@@ -121,6 +121,23 @@ service cloud.firestore {
           allow delete: if request.auth != null
             && resource.data.authorId == request.auth.uid;
         }
+
+        // --- activity (subcollection of tasks) ---
+        // Auto-generated system log entries ("created", "moved") written by
+        // the app itself whenever a member performs the underlying action —
+        // not user-authored content, so there's no per-entry ownership
+        // check beyond "you're a project member," matching the trust level
+        // already granted for the task actions these entries describe.
+        // Immutable and undeletable by design — it's a log, not editable data.
+        match /activity/{activityId} {
+          allow read: if request.auth != null
+            && request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.memberIds;
+          allow create: if request.auth != null
+            && request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.memberIds
+            && request.resource.data.actorId == request.auth.uid;
+          allow update: if false;
+          allow delete: if false;
+        }
       }
     }
   }
