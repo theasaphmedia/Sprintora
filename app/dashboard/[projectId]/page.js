@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   doc,
@@ -67,7 +67,16 @@ function buildTimeline(comments, activity) {
 }
 
 export default function ProjectBoardPage() {
+  return (
+    <Suspense fallback={<div className="loading-screen">Loading...</div>}>
+      <ProjectBoardPageInner />
+    </Suspense>
+  );
+}
+
+function ProjectBoardPageInner() {
   const { projectId } = useParams();
+  const searchParams = useSearchParams();
   const { user, loading } = useAuth();
   const router = useRouter();
   const [project, setProject] = useState(null);
@@ -129,6 +138,22 @@ export default function ProjectBoardPage() {
       unsubTasks();
     };
   }, [projectId, user, loading, router]);
+
+  // Deep-link from the dashboard search: /dashboard/{id}?task={taskId}
+  // should open straight to that task's detail modal. Guarded with a ref
+  // so it only fires once — otherwise re-running this every time `tasks`
+  // updates (e.g. after posting a comment) would re-open a modal the user
+  // deliberately closed.
+  const didAutoOpenTask = useRef(false);
+  useEffect(() => {
+    if (didAutoOpenTask.current) return;
+    const wantedTaskId = searchParams.get("task");
+    if (!wantedTaskId) return;
+    if (tasks.some((t) => t.id === wantedTaskId)) {
+      setSelectedTaskId(wantedTaskId);
+      didAutoOpenTask.current = true;
+    }
+  }, [tasks, searchParams]);
 
   useEffect(() => {
     if (!project?.memberIds?.length) {
