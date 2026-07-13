@@ -12,6 +12,7 @@ import {
   updateDoc,
   deleteDoc,
   query,
+  where,
   orderBy,
   serverTimestamp,
   arrayRemove,
@@ -40,6 +41,7 @@ export default function ProjectBoardPage() {
   const [inviteMsg, setInviteMsg] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [invites, setInvites] = useState([]);
 
   useEffect(() => {
     if (loading) return;
@@ -106,6 +108,29 @@ export default function ProjectBoardPage() {
       cancelled = true;
     };
   }, [project]);
+
+  useEffect(() => {
+    // Only the owner ever sees this (gated below in the JSX too), and every
+    // invite for a project is always created with invitedBy == that
+    // project's owner (enforced by the security rules), so this query only
+    // ever runs as the one user for whom every matching doc satisfies the
+    // rules — it isn't a query any non-owner could run.
+    if (!user || !project || project.ownerId !== user.uid) {
+      setInvites([]);
+      return;
+    }
+    const q = query(collection(db, "invites"), where("projectId", "==", projectId));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setInvites(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => {
+        console.error("Failed to load invites", err);
+      }
+    );
+    return () => unsub();
+  }, [user, project, projectId]);
 
   async function handleAddTask(e) {
     e.preventDefault();
@@ -305,6 +330,33 @@ export default function ProjectBoardPage() {
                 </form>
                 {inviteMsg && <p className="invite-note">{inviteMsg}</p>}
               </>
+            )}
+
+            {isOwner && invites.length > 0 && (
+              <div style={{ marginTop: 20, marginBottom: 20 }}>
+                <h4 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--slate-500)", marginBottom: 10 }}>
+                  Invites sent
+                </h4>
+                <div className="member-list">
+                  {invites.map((inv) => (
+                    <div className="member-row" key={inv.id}>
+                      <div className="member-info">
+                        <span className="member-email">{inv.email}</span>
+                      </div>
+                      <span
+                        className="role-badge"
+                        style={
+                          inv.status === "accepted"
+                            ? { background: "#dcfce7", color: "var(--green)" }
+                            : { background: "#fef3c7", color: "var(--amber)" }
+                        }
+                      >
+                        {inv.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
             <div className="member-list" style={{ marginTop: 20 }}>
