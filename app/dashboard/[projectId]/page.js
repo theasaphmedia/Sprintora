@@ -119,7 +119,11 @@ export default function ProjectBoardPage() {
       setInvites([]);
       return;
     }
-    const q = query(collection(db, "invites"), where("projectId", "==", projectId));
+    const q = query(
+      collection(db, "invites"),
+      where("projectId", "==", projectId),
+      where("invitedBy", "==", user.uid)
+    );
     const unsub = onSnapshot(
       q,
       (snap) => {
