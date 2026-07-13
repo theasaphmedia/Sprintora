@@ -1,31 +1,15 @@
-import { jwtVerify, createRemoteJWKSet } from "jose";
 import nodemailer from "nodemailer";
+import { verifyFirebaseIdToken } from "../../../lib/serverAuth";
+import { escapeHtml } from "../../../lib/emailUtils";
 
-const FIREBASE_PROJECT_ID = "sprintora-cda3a";
-
-// Verifies the Firebase ID token's signature against Google's public keys
-// for the securetoken service, without needing the Firebase Admin SDK (which
-// would require a service-account credential as another secret to manage).
-// This confirms the request comes from a genuinely signed-in Sprintora user
-// — it does NOT confirm that user actually owns the project being invited
-// to. Adding that check would mean either the Admin SDK + service account,
-// or re-deriving the same read via the Firestore REST API with this token
-// (so the existing security rules do the check). Left as a follow-up: the
+// Token verification note (kept from before the shared helper existed): this
+// confirms the request comes from a genuinely signed-in Sprintora user — it
+// does NOT confirm that user actually owns the project being invited to.
+// Adding that check would mean either the Admin SDK + service account, or
+// re-deriving the same read via the Firestore REST API with this token (so
+// the existing security rules do the check). Left as a follow-up: the
 // practical abuse surface today is "a signed-in Sprintora user can trigger
 // an invite email to an arbitrary address," not "anyone on the internet."
-const JWKS = createRemoteJWKSet(
-  new URL(
-    "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
-  )
-);
-
-async function verifyFirebaseIdToken(idToken) {
-  const { payload } = await jwtVerify(idToken, JWKS, {
-    issuer: `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`,
-    audience: FIREBASE_PROJECT_ID,
-  });
-  return payload;
-}
 
 export async function POST(request) {
   const authHeader = request.headers.get("authorization") || "";
@@ -92,12 +76,4 @@ export async function POST(request) {
     console.error("Failed to send via Gmail SMTP", err);
     return Response.json({ error: "Failed to send email" }, { status: 500 });
   }
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }

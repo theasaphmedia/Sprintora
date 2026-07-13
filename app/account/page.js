@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { useAuth } from "../../lib/useAuth";
 
@@ -10,6 +10,9 @@ export default function AccountPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [profile, setProfile] = useState(null);
+  const [emailNotifications, setEmailNotifications] = useState(true);
+  const [prefBusy, setPrefBusy] = useState(false);
+  const [prefMsg, setPrefMsg] = useState("");
 
   useEffect(() => {
     if (loading) return;
@@ -18,9 +21,27 @@ export default function AccountPage() {
       return;
     }
     getDoc(doc(db, "users", user.uid)).then((snap) => {
-      setProfile(snap.exists() ? snap.data() : null);
+      const data = snap.exists() ? snap.data() : null;
+      setProfile(data);
+      // Missing field = never explicitly opted out = notifications on.
+      setEmailNotifications(data?.emailNotifications !== false);
     });
   }, [user, loading, router]);
+
+  async function handleToggleNotifications() {
+    const next = !emailNotifications;
+    setPrefBusy(true);
+    setPrefMsg("");
+    try {
+      await updateDoc(doc(db, "users", user.uid), { emailNotifications: next });
+      setEmailNotifications(next);
+    } catch (err) {
+      console.error("Failed to update notification preference", err);
+      setPrefMsg("Couldn't save that. Please try again.");
+    } finally {
+      setPrefBusy(false);
+    }
+  }
 
   if (loading || !user) return <div className="loading-screen">Loading...</div>;
 
@@ -51,6 +72,22 @@ export default function AccountPage() {
           <button className="btn btn-secondary" disabled style={{ marginTop: 16, cursor: "not-allowed" }}>
             Upgrade (coming soon)
           </button>
+        </div>
+
+        <div className="project-card" style={{ marginTop: 20 }}>
+          <p style={{ fontSize: 13, color: "var(--slate-500)", marginBottom: 4 }}>Email notifications</p>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={emailNotifications}
+              onChange={handleToggleNotifications}
+              disabled={prefBusy}
+            />
+            Email me when I&apos;m assigned a task or have one due tomorrow
+          </label>
+          {prefMsg && (
+            <p style={{ color: "var(--red)", fontSize: 13, marginTop: 8 }}>{prefMsg}</p>
+          )}
         </div>
       </div>
     </div>

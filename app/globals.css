@@ -111,6 +111,8 @@ footer a{color:rgba(255,255,255,0.8);}
 .field label{display:block;font-size:13px;font-weight:600;color:var(--slate-700);margin-bottom:6px;}
 .field input{width:100%;padding:11px 13px;border:1px solid var(--slate-300);border-radius:8px;font-size:14px;}
 .field input:focus{outline:2px solid var(--blue);outline-offset:1px;}
+.field select{width:100%;padding:10px 13px;border:1px solid var(--slate-300);border-radius:8px;font-size:14px;background:var(--white);color:var(--slate-900);}
+.field select:focus{outline:2px solid var(--blue);outline-offset:1px;}
 .auth-error{background:#fef2f2;color:var(--red);border:1px solid #fecaca;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:16px;}
 .auth-info{background:#f0fdf4;color:var(--green);border:1px solid #bbf7d0;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:16px;}
 .divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:var(--slate-500);font-size:13px;}

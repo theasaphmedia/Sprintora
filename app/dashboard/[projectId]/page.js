@@ -20,6 +20,7 @@ import {
 import { db } from "../../../lib/firebase";
 import { useAuth } from "../../../lib/useAuth";
 import { inviteTeammate, resendInvite, markInviteStatus } from "../../../lib/invites";
+import { notifyAssignment } from "../../../lib/notifications";
 
 const COLUMNS = [
   { key: "todo", label: "To Do" },
@@ -43,7 +44,22 @@ function formatActivityText(item) {
     const to = COLUMN_LABELS[item.toStatus] || item.toStatus;
     return `moved this from ${from} to ${to}`;
   }
+  if (item.type === "assigned") {
+    return item.assigneeName ? `assigned this to ${item.assigneeName}` : "unassigned this task";
+  }
+  if (item.type === "due-date") {
+    return item.dueDate ? `set the due date to ${item.dueDate}` : "cleared the due date";
+  }
   return "made a change";
+}
+
+// "YYYY-MM-DD" string compare is safe here since both sides are the same
+// fixed format — avoids Timestamp/timezone handling for what's just a
+// calendar-day due date, not a precise moment in time.
+function isOverdue(dueDate) {
+  if (!dueDate) return false;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return dueDate < todayStr;
 }
 
 // Merges the comment thread and the system activity log into one
@@ -171,6 +187,8 @@ function ProjectBoardPageInner() {
           email: data?.email || "(unknown)",
           displayName: data?.displayName || "",
           role: project.roles?.[uid] || "member",
+          // Missing field = never explicitly opted out = notifications on.
+          emailNotifications: data?.emailNotifications !== false,
         });
       }
       if (!cancelled) setMembers(rows);
@@ -338,6 +356,48 @@ function ProjectBoardPageInner() {
     } catch (err) {
       console.error("Failed to move task", err);
       window.alert("Couldn't move that task. Please try again.");
+    }
+  }
+
+  async function handleAssign(taskId, assigneeId) {
+    try {
+      await updateDoc(doc(db, "projects", projectId, "tasks", taskId), {
+        assigneeId: assigneeId || null,
+      });
+      const assignee = assigneeId ? members.find((m) => m.uid === assigneeId) : null;
+      logActivity(taskId, {
+        type: "assigned",
+        assigneeId: assigneeId || null,
+        assigneeName: assignee ? assignee.displayName || assignee.email : "",
+      });
+      // Don't email someone for assigning a task to themselves, and respect
+      // their notification preference before ever hitting the API route.
+      if (assignee && assignee.uid !== user.uid && assignee.emailNotifications && assignee.email) {
+        const task = tasks.find((t) => t.id === taskId);
+        notifyAssignment({
+          to: assignee.email,
+          taskTitle: task?.title || "a task",
+          projectName: project.name,
+          projectId,
+          taskId,
+          assignedByName: user.displayName || user.email || "Someone",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to assign task", err);
+      window.alert("Couldn't update the assignee. Please try again.");
+    }
+  }
+
+  async function handleSetDueDate(taskId, dueDate) {
+    try {
+      await updateDoc(doc(db, "projects", projectId, "tasks", taskId), {
+        dueDate: dueDate || null,
+      });
+      logActivity(taskId, { type: "due-date", dueDate: dueDate || null });
+    } catch (err) {
+      console.error("Failed to set due date", err);
+      window.alert("Couldn't update the due date. Please try again.");
     }
   }
 
@@ -551,6 +611,29 @@ function ProjectBoardPageInner() {
                         style={{ cursor: "pointer" }}
                       >
                         {t.title}
+                        {(t.assigneeId || t.dueDate) && (
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                            {t.assigneeId && (
+                              <span style={{ fontSize: 11, color: "var(--slate-500)" }}>
+                                {(() => {
+                                  const a = members.find((m) => m.uid === t.assigneeId);
+                                  return a ? a.displayName || a.email : "Unknown";
+                                })()}
+                              </span>
+                            )}
+                            {t.dueDate && (
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  color: isOverdue(t.dueDate) ? "var(--red)" : "var(--slate-500)",
+                                  fontWeight: isOverdue(t.dueDate) ? 700 : 400,
+                                }}
+                              >
+                                Due {t.dueDate}
+                              </span>
+                            )}
+                          </div>
+                        )}
                         <div className="task-actions">
                           {colIdx > 0 && (
                             <button onClick={(e) => { e.stopPropagation(); moveTask(t.id, -1); }}>
@@ -707,6 +790,31 @@ function ProjectBoardPageInner() {
               <button className="btn btn-sm btn-secondary" onClick={() => setSelectedTaskId(null)}>
                 Close
               </button>
+            </div>
+
+            <div style={{ display: "flex", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+              <div className="field" style={{ marginBottom: 0, minWidth: 160 }}>
+                <label>Assignee</label>
+                <select
+                  value={tasks.find((t) => t.id === selectedTaskId)?.assigneeId || ""}
+                  onChange={(e) => handleAssign(selectedTaskId, e.target.value || null)}
+                >
+                  <option value="">Unassigned</option>
+                  {members.map((m) => (
+                    <option key={m.uid} value={m.uid}>
+                      {m.displayName || m.email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field" style={{ marginBottom: 0, minWidth: 160 }}>
+                <label>Due date</label>
+                <input
+                  type="date"
+                  value={tasks.find((t) => t.id === selectedTaskId)?.dueDate || ""}
+                  onChange={(e) => handleSetDueDate(selectedTaskId, e.target.value || null)}
+                />
+              </div>
             </div>
 
             <h4 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--slate-500)", marginBottom: 10 }}>
