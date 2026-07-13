@@ -1,4 +1,5 @@
 import { jwtVerify, createRemoteJWKSet } from "jose";
+import nodemailer from "nodemailer";
 
 const FIREBASE_PROJECT_ID = "sprintora-cda3a";
 
@@ -51,9 +52,10 @@ export async function POST(request) {
     return Response.json({ error: "Missing to/projectName" }, { status: 400 });
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    console.error("RESEND_API_KEY is not configured");
+  const gmailUser = process.env.GMAIL_USER;
+  const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
+  if (!gmailUser || !gmailAppPassword) {
+    console.error("GMAIL_USER / GMAIL_APP_PASSWORD is not configured");
     return Response.json({ error: "Email service not configured" }, { status: 500 });
   }
 
@@ -69,29 +71,25 @@ export async function POST(request) {
        <a href="https://sprintora-nine.vercel.app/signup">sprintora-nine.vercel.app</a></p>`;
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: process.env.RESEND_FROM_EMAIL || "Sprintora <onboarding@resend.dev>",
-        to: [to],
-        subject,
-        html,
-      }),
+    // Sends via the user's own Gmail account over SMTP using an App
+    // Password — no domain verification needed (unlike Resend/most
+    // transactional-email APIs), because delivery rides on Gmail's own,
+    // already-trusted sending reputation. Free tier: 500 emails/day.
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: { user: gmailUser, pass: gmailAppPassword },
     });
 
-    if (!res.ok) {
-      const errBody = await res.text();
-      console.error("Resend API error", res.status, errBody);
-      return Response.json({ error: "Failed to send email" }, { status: 502 });
-    }
+    await transporter.sendMail({
+      from: `Sprintora <${gmailUser}>`,
+      to,
+      subject,
+      html,
+    });
 
     return Response.json({ ok: true });
   } catch (err) {
-    console.error("Failed to call Resend", err);
+    console.error("Failed to send via Gmail SMTP", err);
     return Response.json({ error: "Failed to send email" }, { status: 500 });
   }
 }
