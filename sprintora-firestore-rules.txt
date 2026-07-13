@@ -5,11 +5,28 @@ service cloud.firestore {
     // --- users ---
     // Any signed-in user can read any user profile (needed to look up
     // teammates by email when inviting, and to show names on the team
-    // panel). Each user can only create/edit their own profile document.
+    // panel). Each user can create/edit their own profile document, but NOT
+    // the billing/trial fields on it — those are written only by
+    // server-side routes (Admin SDK, bypasses these rules entirely):
+    // /api/start-trial, the Paystack webhook, and the trial-expiry cron.
+    // Without this restriction, a signed-in user could open dev tools and
+    // set their own plan to "pro" with a direct Firestore write, or reset
+    // trialUsed to false to claim unlimited free trials.
+    // Signup (app/signup/page.js) does write `plan: "beta"` itself at
+    // account creation — that's still allowed below, since "beta" is the
+    // safe free-tier default; only "pro" and the billing/trial fields are
+    // blocked from ever being client-writable.
     match /users/{uid} {
       allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == uid;
-      allow update: if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null && request.auth.uid == uid
+                    && !request.resource.data.keys().hasAny(
+                      ['paystackCustomerCode', 'paystackSubscriptionCode', 'subscriptionStatus', 'trialEndsAt', 'trialUsed']
+                    )
+                    && (!('plan' in request.resource.data) || request.resource.data.plan == 'beta');
+      allow update: if request.auth != null && request.auth.uid == uid
+                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny(
+                      ['plan', 'paystackCustomerCode', 'paystackSubscriptionCode', 'subscriptionStatus', 'trialEndsAt', 'trialUsed']
+                    );
       allow delete: if false;
     }
 
