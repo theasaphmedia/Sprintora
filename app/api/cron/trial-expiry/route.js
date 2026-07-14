@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { getAdminDb } from "../../../../lib/firebaseAdmin";
 
 // Triggered daily by Vercel Cron (see vercel.json). Since the trial never
@@ -36,6 +37,10 @@ export async function GET(request) {
       .get();
   } catch (err) {
     console.error("Failed to query expired trials (may need a Firestore index — see error for a create-index link)", err);
+    // A cron nobody's watching in real time failing silently is exactly the
+    // case Sentry exists for — Vercel's own log would otherwise be the only
+    // place this ever shows up, and nobody checks that daily.
+    Sentry.captureException(err, { tags: { route: "cron/trial-expiry" } });
     return Response.json({ error: "Query failed" }, { status: 500 });
   }
 

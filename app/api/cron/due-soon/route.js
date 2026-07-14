@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import * as Sentry from "@sentry/nextjs";
 import { getAdminDb } from "../../../../lib/firebaseAdmin";
 import { escapeHtml } from "../../../../lib/emailUtils";
 
@@ -49,6 +50,7 @@ export async function GET(request) {
     tasksSnap = await db.collectionGroup("tasks").where("dueDate", "==", tomorrowStr).get();
   } catch (err) {
     console.error("Failed to query due-soon tasks (may need a Firestore index — see error for a create-index link)", err);
+    Sentry.captureException(err, { tags: { route: "cron/due-soon" } });
     return Response.json({ error: "Query failed" }, { status: 500 });
   }
 

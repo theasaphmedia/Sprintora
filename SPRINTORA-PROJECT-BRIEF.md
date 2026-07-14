@@ -224,6 +224,26 @@ Skipped this pass rather than built silently, because it's a real infrastructure
 
 Recommendation when picked back up: Option A if/when the Blaze plan upgrade happens anyway (for backups, see #43) — at that point RTDB's own free tier is also more generous and the "don't add a new product" argument weakens. Option B if backups and Blaze stay deferred and presence is wanted sooner — just watch the write-quota math for real before shipping it.
 
+## Session: cron error monitoring gap found and fixed, second broken cron discovered (2026-07-14, same day, after List/Calendar/Insights push verified)
+
+Verifying the List/Calendar/Insights deploy via Vercel's runtime error log turned up two real findings, not just a routine "deploy looks clean" check:
+
+1. **Sentry coverage had a real gap.** The error-monitoring work earlier this session (#42) added `Sentry.captureException` to the Paystack webhook, checkout session, and trial-start routes — but not to the two Vercel Cron routes (`/api/cron/due-soon`, `/api/cron/trial-expiry`). Those are arguably the routes that most need it: nobody's watching a cron in real time the way you'd notice a broken button. **Fixed this session** — both cron routes' query-failure catch blocks now also call `Sentry.captureException`. Not yet pushed (see below).
+
+2. **A second cron has been silently broken since its first real run.** `/api/cron/trial-expiry` failed today at 14:59 UTC with the same class of error as the due-soon cron did — a missing Firestore index, this time a composite index on `users` (`subscriptionStatus` + `trialEndsAt`). This was actually flagged as a possible gap in an much earlier brief version ("One-time Firestore index notes") but never confirmed or fixed until this log check surfaced real proof. **Practical effect: nobody whose card-less trial has expired is being reverted to the free plan right now** — they're still getting Team-tier access past their 14 days until this is fixed.
+
+**Fix** (same pattern as the due-soon index, but simpler — this one's a same-collection compound query, not a collection-group query, so it's a standard composite index, not an automatic-indexing exemption): open this link while logged into the `sprintora-cda3a` Firebase project, and click through the composite-index creation dialog it lands you on:
+
+`https://console.firebase.google.com/v1/r/project/sprintora-cda3a/firestore/indexes?create_composite=Ck1wcm9qZWN0cy9zcHJpbnRvcmEtY2RhM2EvZGF0YWJhc2VzLyhkZWZhdWx0KS9jb2xsZWN0aW9uR3JvdXBzL3VzZXJzL2luZGV4ZXMvXxABGhYKEnN1YnNjcmlwdGlvblN0YXR1cxABGg8KC3RyaWFsRW5kc0F0EAEaDAoIX19uYW1lX18QAQ`
+
+Deploy command for the Sentry cron fix (separate small commit, code-reviewed not build-tested locally, same sandbox limitation as always):
+```
+cd "C:\Users\USER\Documents\AI\sprintora-app"
+git add -A
+git commit -m "Add Sentry coverage to cron routes"
+git push
+```
+
 ## Session: bus-factor documentation (2026-07-14, same day, continued while user was away)
 
 New file: **`HANDBOOK.md`** (repo root) — a from-scratch technical reference distinct from this brief. This brief is a chronological session log (great for "what happened and why," hard to skim as "how do I actually work on this app today"); the handbook is the opposite — a current-state map for anyone (including the user, months from now) picking this codebase up cold. Covers: architecture map (verified against the real file tree, not memory), where each piece of infrastructure actually lives and who can access it, env var inventory (names only, no values), how deploys work, biggest real risks in priority order, and an explicit "if you're picking this up cold" pointer back to this brief for the "why." Doesn't duplicate the brief's history.
