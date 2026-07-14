@@ -29,6 +29,12 @@ const COLUMNS = [
   { key: "done", label: "Done" },
 ];
 
+const STATUS_STYLES = {
+  todo: { background: "#e2e8f0", color: "var(--slate-700)" },
+  in_progress: { background: "#dbeafe", color: "var(--blue)" },
+  done: { background: "#dcfce7", color: "var(--green)" },
+};
+
 const INVITE_STATUS_STYLES = {
   pending: { background: "#fef3c7", color: "var(--amber)" },
   accepted: { background: "#dcfce7", color: "var(--green)" },
@@ -62,6 +68,33 @@ function isOverdue(dueDate) {
   const todayStr = new Date().toISOString().slice(0, 10);
   return dueDate < todayStr;
 }
+
+// Builds a 7-column week grid for the given month, padding the leading and
+// trailing edges with nulls so every row is a full week — simplest way to
+// lay this out as a CSS grid without special-casing the first/last row.
+// Returns "YYYY-MM-DD" strings (not Date objects) so cells can be compared
+// directly against a task's dueDate with no timezone conversion either way.
+function buildCalendarWeeks(year, month) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const firstOfMonth = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const leadingBlanks = firstOfMonth.getDay(); // 0 (Sun) - 6 (Sat)
+  const cells = [];
+  for (let i = 0; i < leadingBlanks; i++) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day++) {
+    cells.push(`${year}-${pad(month + 1)}-${pad(day)}`);
+  }
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_LABELS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 
 // Merges the comment thread and the system activity log into one
 // chronological timeline for the task detail view. Firestore can't
@@ -116,6 +149,12 @@ function ProjectBoardPageInner() {
   const [commentBusy, setCommentBusy] = useState(false);
   const [activity, setActivity] = useState([]);
   const [ownerProfile, setOwnerProfile] = useState(null);
+  const [listSortKey, setListSortKey] = useState("dueDate");
+  const [listSortDir, setListSortDir] = useState("asc");
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const d = new Date();
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
 
   useEffect(() => {
     if (loading) return;
@@ -586,6 +625,103 @@ function ProjectBoardPageInner() {
   const memberLimits = limitsForPlan(ownerProfile?.plan);
   const atMemberLimit = members.length >= memberLimits.maxMembers;
 
+  function assigneeLabel(assigneeId) {
+    if (!assigneeId) return null;
+    const a = members.find((m) => m.uid === assigneeId);
+    return a ? a.displayName || a.email : "Unknown";
+  }
+
+  // List view: every task across all three statuses, sorted by whichever
+  // column was last clicked. Tasks with no due date always sort to the end
+  // regardless of direction — an empty due date isn't meaningfully "before"
+  // or "after" a real one, so it shouldn't jump to the top on a descending
+  // sort just because "" sorts before real date strings.
+  function sortedTasksForList() {
+    const withRank = tasks.map((t) => ({ t, hasDue: Boolean(t.dueDate) }));
+    withRank.sort((a, b) => {
+      if (listSortKey === "dueDate") {
+        if (a.hasDue !== b.hasDue) return a.hasDue ? -1 : 1;
+        if (!a.hasDue) return 0;
+      }
+      let cmp = 0;
+      if (listSortKey === "title") cmp = a.t.title.localeCompare(b.t.title);
+      else if (listSortKey === "status") {
+        cmp = COLUMNS.findIndex((c) => c.key === a.t.status) - COLUMNS.findIndex((c) => c.key === b.t.status);
+      } else if (listSortKey === "assignee") {
+        cmp = (assigneeLabel(a.t.assigneeId) || "").localeCompare(assigneeLabel(b.t.assigneeId) || "");
+      } else if (listSortKey === "dueDate") {
+        cmp = a.t.dueDate.localeCompare(b.t.dueDate);
+      }
+      return listSortDir === "asc" ? cmp : -cmp;
+    });
+    return withRank.map((r) => r.t);
+  }
+
+  function toggleSort(key) {
+    if (listSortKey === key) {
+      setListSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setListSortKey(key);
+      setListSortDir("asc");
+    }
+  }
+
+  const calendarWeeks = buildCalendarWeeks(calendarMonth.year, calendarMonth.month);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const tasksByDueDate = {};
+  const undatedTasks = [];
+  for (const t of tasks) {
+    if (t.dueDate) {
+      (tasksByDueDate[t.dueDate] = tasksByDueDate[t.dueDate] || []).push(t);
+    } else {
+      undatedTasks.push(t);
+    }
+  }
+
+  function shiftCalendarMonth(delta) {
+    setCalendarMonth(({ year, month }) => {
+      let newMonth = month + delta;
+      let newYear = year;
+      if (newMonth < 0) { newMonth = 11; newYear -= 1; }
+      if (newMonth > 11) { newMonth = 0; newYear += 1; }
+      return { year: newYear, month: newMonth };
+    });
+  }
+
+  // All derived client-side from `tasks`/`members`, already loaded for the
+  // other views — no new Firestore reads, so no new rules surface and no
+  // new failure mode beyond what board/list/calendar already have.
+  // "Workload" only counts open (not-done) tasks — a pile of finished work
+  // assigned to someone isn't a signal of who's overloaded right now.
+  function computeInsights() {
+    const total = tasks.length;
+    const byStatus = { todo: 0, in_progress: 0, done: 0 };
+    let overdueCount = 0;
+    const weekCutoff = new Date();
+    weekCutoff.setDate(weekCutoff.getDate() + 7);
+    const weekCutoffStr = weekCutoff.toISOString().slice(0, 10);
+    let dueThisWeekCount = 0;
+    const workload = {};
+    for (const t of tasks) {
+      byStatus[t.status] = (byStatus[t.status] || 0) + 1;
+      if (t.status !== "done") {
+        if (isOverdue(t.dueDate)) overdueCount++;
+        if (t.dueDate && t.dueDate >= todayStr && t.dueDate <= weekCutoffStr) dueThisWeekCount++;
+        const key = t.assigneeId || "unassigned";
+        workload[key] = (workload[key] || 0) + 1;
+      }
+    }
+    const completedPct = total > 0 ? Math.round((byStatus.done / total) * 100) : 0;
+    const workloadRows = Object.entries(workload)
+      .map(([uid, count]) => ({
+        uid,
+        count,
+        label: uid === "unassigned" ? "Unassigned" : assigneeLabel(uid) || "Unknown",
+      }))
+      .sort((a, b) => b.count - a.count);
+    return { total, byStatus, overdueCount, dueThisWeekCount, completedPct, workloadRows };
+  }
+
   return (
     <div className="app-shell">
       <div className="app-header">
@@ -608,6 +744,15 @@ function ProjectBoardPageInner() {
         <div className="tabs">
           <button className={`tab ${tab === "board" ? "active" : ""}`} onClick={() => setTab("board")}>
             Board
+          </button>
+          <button className={`tab ${tab === "list" ? "active" : ""}`} onClick={() => setTab("list")}>
+            List
+          </button>
+          <button className={`tab ${tab === "calendar" ? "active" : ""}`} onClick={() => setTab("calendar")}>
+            Calendar
+          </button>
+          <button className={`tab ${tab === "insights" ? "active" : ""}`} onClick={() => setTab("insights")}>
+            Insights
           </button>
           <button className={`tab ${tab === "team" ? "active" : ""}`} onClick={() => setTab("team")}>
             Team
@@ -687,6 +832,225 @@ function ProjectBoardPageInner() {
             </div>
           </>
         )}
+
+        {tab === "list" && (
+          <div style={{ marginTop: 20 }}>
+            <form className="add-task-form" onSubmit={handleAddTask}>
+              <input
+                placeholder="Add a task..."
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+              />
+              <button className="btn btn-primary" type="submit">Add</button>
+            </form>
+
+            <div style={{ overflowX: "auto", marginTop: 16 }}>
+              <table className="task-list-table">
+                <thead>
+                  <tr>
+                    <th onClick={() => toggleSort("title")}>
+                      Title{listSortKey === "title" ? (listSortDir === "asc" ? " ▲" : " ▼") : ""}
+                    </th>
+                    <th onClick={() => toggleSort("status")}>
+                      Status{listSortKey === "status" ? (listSortDir === "asc" ? " ▲" : " ▼") : ""}
+                    </th>
+                    <th onClick={() => toggleSort("assignee")}>
+                      Assignee{listSortKey === "assignee" ? (listSortDir === "asc" ? " ▲" : " ▼") : ""}
+                    </th>
+                    <th onClick={() => toggleSort("dueDate")}>
+                      Due date{listSortKey === "dueDate" ? (listSortDir === "asc" ? " ▲" : " ▼") : ""}
+                    </th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedTasksForList().map((t) => (
+                    <tr key={t.id} onClick={() => setSelectedTaskId(t.id)} style={{ cursor: "pointer" }}>
+                      <td>{t.title}</td>
+                      <td>
+                        <span className="role-badge" style={STATUS_STYLES[t.status]}>
+                          {COLUMN_LABELS[t.status] || t.status}
+                        </span>
+                      </td>
+                      <td>
+                        {assigneeLabel(t.assigneeId) || (
+                          <span style={{ color: "var(--slate-500)" }}>Unassigned</span>
+                        )}
+                      </td>
+                      <td
+                        style={{
+                          color: isOverdue(t.dueDate) ? "var(--red)" : undefined,
+                          fontWeight: isOverdue(t.dueDate) ? 700 : 400,
+                        }}
+                      >
+                        {t.dueDate || <span style={{ color: "var(--slate-500)" }}>&mdash;</span>}
+                      </td>
+                      <td>
+                        <button
+                          className="danger"
+                          onClick={(e) => { e.stopPropagation(); removeTask(t.id); }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {tasks.length === 0 && (
+                    <tr>
+                      <td colSpan={5} style={{ color: "var(--slate-500)", padding: 16 }}>
+                        No tasks yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {tab === "calendar" && (
+          <div style={{ marginTop: 20 }}>
+            <div className="calendar-nav">
+              <button className="btn btn-sm btn-secondary" onClick={() => shiftCalendarMonth(-1)}>
+                &larr; Prev
+              </button>
+              <h4>{MONTH_LABELS[calendarMonth.month]} {calendarMonth.year}</h4>
+              <button className="btn btn-sm btn-secondary" onClick={() => shiftCalendarMonth(1)}>
+                Next &rarr;
+              </button>
+            </div>
+            <div className="calendar-grid">
+              {WEEKDAY_LABELS.map((d) => (
+                <div key={d} className="calendar-weekday">{d}</div>
+              ))}
+              {calendarWeeks.map((week, wi) =>
+                week.map((dateStr, di) => (
+                  <div
+                    key={`${wi}-${di}`}
+                    className={`calendar-cell${dateStr === todayStr ? " calendar-today" : ""}${!dateStr ? " calendar-cell-empty" : ""}`}
+                  >
+                    {dateStr && (
+                      <>
+                        <div className="calendar-day-number">{Number(dateStr.slice(-2))}</div>
+                        {(tasksByDueDate[dateStr] || []).map((t) => (
+                          <div
+                            key={t.id}
+                            className="calendar-task-pill"
+                            onClick={() => setSelectedTaskId(t.id)}
+                            style={
+                              isOverdue(t.dueDate) && t.status !== "done"
+                                ? { background: "#fee2e2", color: "var(--red)" }
+                                : undefined
+                            }
+                          >
+                            {t.title}
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            {undatedTasks.length > 0 && (
+              <div style={{ marginTop: 20 }}>
+                <h4
+                  style={{
+                    fontSize: 13,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.04em",
+                    color: "var(--slate-500)",
+                    marginBottom: 10,
+                  }}
+                >
+                  No due date ({undatedTasks.length})
+                </h4>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {undatedTasks.map((t) => (
+                    <div
+                      key={t.id}
+                      className="calendar-task-pill"
+                      onClick={() => setSelectedTaskId(t.id)}
+                    >
+                      {t.title}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "insights" && (() => {
+          const ins = computeInsights();
+          const maxWorkload = Math.max(1, ...ins.workloadRows.map((r) => r.count));
+          return (
+            <div style={{ marginTop: 20 }}>
+              <div className="insights-stats">
+                <div className="insight-card">
+                  <div className="insight-value">{ins.total}</div>
+                  <div className="insight-label">Total tasks</div>
+                </div>
+                <div className="insight-card">
+                  <div className="insight-value">{ins.completedPct}%</div>
+                  <div className="insight-label">Completed</div>
+                </div>
+                <div className="insight-card">
+                  <div className="insight-value" style={{ color: ins.overdueCount > 0 ? "var(--red)" : undefined }}>
+                    {ins.overdueCount}
+                  </div>
+                  <div className="insight-label">Overdue</div>
+                </div>
+                <div className="insight-card">
+                  <div className="insight-value">{ins.dueThisWeekCount}</div>
+                  <div className="insight-label">Due this week</div>
+                </div>
+              </div>
+
+              <h4 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--slate-500)", margin: "24px 0 12px" }}>
+                Status breakdown
+              </h4>
+              {COLUMNS.map((c) => (
+                <div key={c.key} style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--slate-500)", marginBottom: 4 }}>
+                    <span>{c.label}</span>
+                    <span>{ins.byStatus[c.key] || 0}</span>
+                  </div>
+                  <div className="insight-bar-track">
+                    <div
+                      className="insight-bar-fill"
+                      style={{
+                        width: `${ins.total ? ((ins.byStatus[c.key] || 0) / ins.total) * 100 : 0}%`,
+                        background: STATUS_STYLES[c.key].color,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+
+              <h4 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--slate-500)", margin: "24px 0 12px" }}>
+                Workload (open tasks)
+              </h4>
+              {ins.workloadRows.length === 0 && (
+                <p style={{ color: "var(--slate-500)", fontSize: 13 }}>No open tasks.</p>
+              )}
+              {ins.workloadRows.map((r) => (
+                <div key={r.uid} style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                    <span>{r.label}</span>
+                    <span style={{ color: "var(--slate-500)" }}>{r.count}</span>
+                  </div>
+                  <div className="insight-bar-track">
+                    <div
+                      className="insight-bar-fill"
+                      style={{ width: `${(r.count / maxWorkload) * 100}%`, background: "var(--blue)" }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
 
         {tab === "team" && (
           <div className="team-panel">

@@ -185,6 +185,57 @@ Deliberately scoped to **additive, infra-only changes** — nothing here touches
 
 Remaining backlog after this batch, unchanged: #35 (List/Calendar views), #36 (insights panel), #37 (presence indicators), #44 (bus-factor documentation), plus the three explicitly-deferred larger items (#38 integrations, #39 AI features, #40 full analytics).
 
+## Session: List and Calendar views (2026-07-14, same day, built while user was away)
+
+Built with explicit permission to continue unsupervised ("continue with the plan, when i come i will do what you will need me to do") — **not yet pushed**, sitting as local uncommitted changes. Deliberately code-only, no dashboard config or console steps needed, so there's nothing blocking on the user's return except running `git add / commit / push` themselves (the sandbox this AI runs in still can't push directly — same limitation as every prior session).
+
+- **`app/dashboard/[projectId]/page.js`**: added two new tabs alongside the existing Board and Team — **List** and **Calendar** — both reading from the same `tasks` state the board view already uses, so there's no new Firestore query or data model change, just new ways to render what's already loaded.
+  - **List view**: a flat, sortable table of every task regardless of status (Title / Status / Assignee / Due date / Delete). Click a column header to sort by it; click again to reverse direction. Tasks with no due date always sort to the end regardless of direction — deliberately, since an empty date isn't meaningfully "before" a real one. Clicking a row opens the same task detail modal the board view uses (assignee/due-date editing, comments, activity feed) — no duplicate modal logic.
+  - **Calendar view**: a month grid (prev/next navigation, defaults to the current month) showing each task as a small pill on its due date's cell; overdue undone tasks are highlighted red. Tasks with no due date are **not hidden** — they're listed separately below the grid under "No due date (N)", specifically so nothing silently disappears just because it lacks a date. Clicking any task pill opens the same detail modal as the other two views.
+  - Both new views reuse `handleAddTask`, `removeTask`, `setSelectedTaskId`, and the existing task detail modal as-is — no new Firestore read/write paths, so no new security-rules surface area and no new failure modes beyond what board view already has.
+- **`app/globals.css`**: added `.task-list-table`, `.calendar-nav`, `.calendar-grid`, `.calendar-cell`, `.calendar-task-pill`, and related classes, following the existing color-variable and spacing conventions rather than introducing new ones.
+- **Not done**: drag-and-drop between board columns, drag-to-reschedule on the calendar, or a week view — all reasonable follow-ups but explicitly out of scope for this pass, which was "give tasks two more ways to be seen," not "rebuild task interaction."
+- **Verification status**: code-reviewed line by line (same sandbox limitation as always — `npm run build` can't run locally here), not yet exercised in a live browser. Worth clicking through List and Calendar at least once after this deploys, specifically: sorting each column both directions, confirming an overdue task actually renders red in both the list and the calendar, and confirming a task with no due date shows up in the "No due date" section rather than vanishing.
+
+## Session: lightweight insights panel (2026-07-14, same day, continued while user was away)
+
+- **`app/dashboard/[projectId]/page.js`**: added a fifth tab, **Insights**, alongside Board/List/Calendar/Team. Entirely derived client-side from the `tasks` and `members` state already loaded for the other views — no new Firestore reads, no new rules surface, no new failure mode.
+  - Four stat cards: total tasks, completion percentage, overdue count (red when nonzero), and tasks due within the next 7 days.
+  - A status breakdown (To Do / In Progress / Done) as horizontal bars, colored to match each status's existing badge color.
+  - A "Workload (open tasks)" breakdown — count of not-done tasks per assignee, sorted highest first, as horizontal bars. Deliberately counts only open tasks, not total ever assigned — a pile of finished work isn't a signal of who's overloaded right now. Unassigned open tasks show as their own "Unassigned" row rather than being silently excluded.
+- **`app/globals.css`**: added `.insights-stats`, `.insight-card`, `.insight-bar-track`/`.insight-bar-fill` and related classes.
+- **Not done, deliberately**: no trend-over-time (this session's tasks vs. last week's), no per-project comparison across a user's multiple projects, no export. This is a snapshot of one project's current state, not an analytics dashboard — full analytics/reporting is already catalogued separately as backlog item #40, explicitly deferred as a bigger, later effort.
+- **Verification status**: code-reviewed, not yet exercised live. Worth checking once deployed: completion percentage against a project with a known task mix, and that the workload bars actually reflect real assignee counts (not just rendering without errors on an empty project).
+
+Both List/Calendar and Insights are still **unpushed** as of this note — same reason as above, waiting on the user to run git commands themselves. Combined deploy command for everything built this pass:
+```
+cd "C:\Users\USER\Documents\AI\sprintora-app"
+git add -A
+git commit -m "Add List/Calendar views and project insights panel"
+git push
+```
+
+## #37 (presence indicators) — deliberately not built, needs a decision first
+
+Skipped this pass rather than built silently, because it's a real infrastructure tradeoff, not a pure code addition:
+
+- **Option A — Firebase Realtime Database presence pattern.** The "correct" way to do this (RTDB has a native `onDisconnect()` primitive Firestore doesn't have, so it detects a closed tab/lost connection accurately, not just staleness). Requires enabling Realtime Database as a new product in the Firebase console — a manual step only the account owner can do, plus a second security rules file to write and publish (separate from `sprintora-firestore-rules.txt`).
+- **Option B — Firestore heartbeat pattern.** Each active user's client writes a "last seen" timestamp every ~30 seconds; other clients treat anyone seen in the last ~60 seconds as online. No new Firebase product, reuses existing Firestore setup — but adds real, ongoing write volume on a project still on the free Spark plan (20,000 writes/day cap, shared across every other feature that already writes to Firestore: comments, activity logs, rate limiting, task updates). One person with the app open for an hour is ~120 extra writes just for their own presence — worth doing the math against actual expected concurrent usage before picking this, not assuming it's negligible.
+
+Recommendation when picked back up: Option A if/when the Blaze plan upgrade happens anyway (for backups, see #43) — at that point RTDB's own free tier is also more generous and the "don't add a new product" argument weakens. Option B if backups and Blaze stay deferred and presence is wanted sooner — just watch the write-quota math for real before shipping it.
+
+## Session: bus-factor documentation (2026-07-14, same day, continued while user was away)
+
+New file: **`HANDBOOK.md`** (repo root) — a from-scratch technical reference distinct from this brief. This brief is a chronological session log (great for "what happened and why," hard to skim as "how do I actually work on this app today"); the handbook is the opposite — a current-state map for anyone (including the user, months from now) picking this codebase up cold. Covers: architecture map (verified against the real file tree, not memory), where each piece of infrastructure actually lives and who can access it, env var inventory (names only, no values), how deploys work, biggest real risks in priority order, and an explicit "if you're picking this up cold" pointer back to this brief for the "why." Doesn't duplicate the brief's history.
+
+**Everything built while the user was away this pass is still unpushed.** Combined deploy command for List/Calendar views, the insights panel, and the handbook:
+```
+cd "C:\Users\USER\Documents\AI\sprintora-app"
+git add -A
+git commit -m "Add List/Calendar views, project insights panel, engineering handbook"
+git push
+```
+
 **Manual cleanup needed**: the sandbox this AI runs in can't delete files from the mounted project folder (a filesystem restriction), so two now-dead Stripe files were left in place as inert stubs rather than actually removed: `lib/stripe.js` and `app/api/webhooks/stripe/route.js`. Safe to delete both manually:
 ```
 rm lib/stripe.js
