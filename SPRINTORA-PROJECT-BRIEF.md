@@ -1,6 +1,6 @@
 # Sprintora — Project Brief (for continuing chat sessions)
 
-Last updated: 2026-07-14 (pricing/tiering session — adds 3 paid tiers with real caps, replacing the earlier single undifferentiated "pro" plan)
+Last updated: 2026-07-14 (same-day follow-up — error monitoring via Sentry + Firestore backup planning; also reconstructs the previously-unsaved legal/quick-win batch section)
 
 ## What this is
 
@@ -95,7 +95,7 @@ Defined centrally in `lib/planLimits.js` (`PLAN_LIMITS`, `PAID_TIERS`, `TRIAL_TI
 - No legal entity formed yet. The ToS/Privacy Policy drafts have placeholder fields (`[COMPANY LEGAL NAME]`, `[CONTACT EMAIL]`, governing jurisdiction) and **must be reviewed by an actual lawyer** before any real company relies on them.
 - Firebase is on the free Spark plan: hard daily caps (50,000 reads / 20,000 writes per day). Fine for a small pilot; upgrade to the Blaze pay-as-you-go plan before wider usage, otherwise the app can simply stop responding mid-pilot if caps are hit. (User has said: upgrade "when we get there.")
 - Still running on the `vercel.app` subdomain, not a purchased custom domain. (User has said: staying on Vercel for now, will purchase a domain once everything else is done.) Buying a domain would also unlock a proper verified-domain email sender, solving two problems at once if it ever happens.
-- No error monitoring (Sentry or similar), no automated tests, no rate limiting on the invite endpoint, no Firestore backup schedule. None urgent at current scale; all worth having before a real paying pilot.
+- **Error monitoring: built (Sentry), not yet verified live** — see the dedicated session section below. Firestore backups: planned, not enabled (needs a Blaze plan upgrade, a billing decision for the account owner). No automated tests, no rate limiting on the invite endpoint. None urgent at current scale beyond what's already been addressed; worth revisiting before a real paying pilot scales up.
 
 ## Tier 2 — in progress
 
@@ -151,6 +151,39 @@ After adding the env vars, trigger a fresh deployment — env vars only apply to
 **Testing before going live**: click "Start 14-day free trial" first — it needs none of the above, since it's pure Firestore (it grants Team-tier caps for the trial). To test the real-payment path, use Paystack's test card numbers (e.g. `4084 0840 8408 4081`, any future expiry, any CVV, PIN `0000`, OTP `123456`) via "Add payment method" or one of the three tier-picker buttons, and confirm the Account page updates to show the correct tier and an active subscription within a few seconds — specifically check that subscribing to Team vs. Business actually lands the right tier (this exercises the webhook's plan_code → tier resolution, not just that *a* charge went through). Also worth testing: as the project owner, try inviting past your tier's member cap and confirm it's actually blocked (not just hidden in the UI) — e.g. temporarily lower a test account's `maxMembers` expectation by checking against the Starter cap of 5. Only switch `PAYSTACK_SECRET_KEY` and all three plan-code env vars to their live-mode equivalents once that loop is confirmed working.
 
 **One-time Firestore index notes**: two separate composite/collection-group indexes may be needed the first time their queries actually run — the due-soon cron's collection-group query on `tasks.dueDate` (from the previous session), and the new trial-expiry cron's compound query on `users` (`subscriptionStatus == "trialing"` AND `trialEndsAt <= now`). Both fail with a `failed-precondition` error containing a direct create-index link on first run if the index doesn't exist yet — check Vercel's logs for `/api/cron/due-soon` and `/api/cron/trial-expiry` after the first scheduled run of each.
+
+## Session: legal baseline + quick-win batch (2026-07-14, same day as pricing)
+
+Note: this section was written in the prior session but didn't make it into the saved brief file — reconstructed here from what's actually live in the codebase (verified by re-reading the files, not from memory).
+
+Built and deployed (commit `Add legal consent flow, trial rate limiting, templates, onboarding polish, command palette`, confirmed READY in production):
+- **Legal consent at signup.** `app/signup/page.js` now has a required checkbox linking to `/terms` and `/privacy` (opens in new tab); both the email/password and Google sign-up paths are blocked (`disabled` + guard in `handleSubmit`/`handleGoogle`) until it's checked.
+- **Real ToS/Privacy pages.** `app/terms/page.js` and `app/privacy/page.js`, content extracted from the existing `.docx` drafts via `pandoc`, not fabricated. Still carry a visible "preliminary, not lawyer-reviewed" banner and unresolved `[COMPANY LEGAL NAME]` / governing-law / liability-cap / data-rights / international-transfer placeholders on purpose — see the lawyer brief given this session below.
+- **Trial rate limiting.** `lib/rateLimit.js` (Firestore-transaction-based fixed window) + `/api/start-trial` now allows max 3 trial starts per IP per 24h, HTTP 429 on the 4th. Documented as a partial mitigation only — doesn't stop VPN rotation, doesn't touch signup itself.
+- **Project templates.** `lib/projectTemplates.js` (blank/sprint/bugs/marketing presets), wired into the "Create project" flow on the dashboard.
+- **Onboarding polish.** Richer zero-projects empty state on the dashboard.
+- **Command palette.** `components/CommandPalette.js`, global Cmd+K/Ctrl+K, mounted once in `app/layout.js`. Navigation only (jumps to projects/pages), not action-execution.
+
+## Session: error monitoring + Firestore backup planning (2026-07-14, same day, next batch)
+
+Deliberately scoped to **additive, infra-only changes** — nothing here touches existing user-facing flows (checkout, invites, task board), specifically so this could ship independently of the bigger UI work (List/Calendar views, insights panel, presence) still queued up next.
+
+**Error monitoring — built and code-complete:**
+- New Sentry project provisioned via the Sentry MCP: org `tai-digital`, project `sprintora` (https://tai-digital.sentry.io). DSN is hardcoded in `lib/sentry.js` — Sentry DSNs aren't secrets (they're meant to ship in the client bundle), so no new Vercel env var is needed for this.
+- Added `@sentry/nextjs` to `package.json` (no lockfile exists in this repo, so Vercel's own `npm install` on deploy resolves it — nothing to run locally).
+- Standard Next.js 14 App Router wiring: `sentry.client.config.js`, `sentry.server.config.js`, `sentry.edge.config.js`, `instrumentation.js` (registers server/edge init + `onRequestError` for RSC errors), `app/global-error.js` (catches root-layout-level crashes). `next.config.js` got `experimental.instrumentationHook: true`, required on Next 14.2.5 for `instrumentation.js` to actually run.
+- Explicit `Sentry.captureException` added to the three highest-consequence server routes: the Paystack webhook's catch-all (`app/api/webhooks/paystack/route.js`), `create-checkout-session`, and `start-trial`. The webhook also gets a dedicated `Sentry.captureMessage` (severity `error`) specifically when a `plan_code` doesn't match any configured tier — that's a real paying customer provisioned to the wrong plan, not just a crash, and deserves its own alert rather than being buried in a generic exception log.
+- A default Sentry alert rule ("Send a notification for high priority issues") already exists on the new project and is enabled — confirm in Sentry's own notification settings that it's actually emailing the right address before relying on it.
+- **Not done, deliberately deferred:** source-map upload via the Sentry webpack plugin (`withSentryConfig` in `next.config.js`) — that needs a `SENTRY_AUTH_TOKEN` env var and org/project auth setup, which is another manual step. Without it, Sentry still catches and reports every error correctly, just with minified/unreadable stack traces instead of your real source lines. Worth doing once you're actually triaging a real issue and the minified trace isn't enough.
+- **Verification still needed**: no live error has been thrown through this path yet. Before trusting it, deliberately trigger one in production (e.g. temporarily break something small, or just check Sentry's own "send a test event" flow) and confirm it shows up in the `tai-digital/sprintora` project.
+
+**Firestore backup strategy — planned, not yet enabled (requires a console click only the account owner can make):**
+- Firestore has a native scheduled-backup feature (Firebase Console → Firestore Database → Backups tab) — daily or weekly, configurable retention — no Cloud Function or Cloud Scheduler needed. This is the recommended approach over a custom export script, since it's built-in and maintained by Google rather than another moving part this app has to own.
+- **Requires the Blaze (pay-as-you-go) plan** — Firestore is currently on the free Spark plan per this brief's Stack section. Backup storage has a real, small ongoing cost. This is a billing decision, not a code change — flagged rather than done, since upgrading a billing plan isn't something to do without the account owner's explicit go-ahead.
+- Recommended settings once enabled: daily backups, 7-day retention to start (cheap, covers "someone fat-fingered a delete yesterday" — the realistic failure mode at current scale). Extend retention later if it proves worth the extra storage cost.
+- Once enabled, note the recovery mechanism is a full point-in-time database restore, not a per-document undo — worth knowing before you need it, not after.
+
+Remaining backlog after this batch, unchanged: #35 (List/Calendar views), #36 (insights panel), #37 (presence indicators), #44 (bus-factor documentation), plus the three explicitly-deferred larger items (#38 integrations, #39 AI features, #40 full analytics).
 
 **Manual cleanup needed**: the sandbox this AI runs in can't delete files from the mounted project folder (a filesystem restriction), so two now-dead Stripe files were left in place as inert stubs rather than actually removed: `lib/stripe.js` and `app/api/webhooks/stripe/route.js`. Safe to delete both manually:
 ```

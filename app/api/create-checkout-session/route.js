@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { verifyFirebaseIdToken } from "../../../lib/serverAuth";
 import { paystackFetch } from "../../../lib/paystack";
 import { getAdminDb } from "../../../lib/firebaseAdmin";
@@ -108,6 +109,7 @@ export async function POST(request) {
     return Response.json({ url: initRes.data.authorization_url });
   } catch (err) {
     console.error("Failed to create Paystack checkout transaction", err);
+    Sentry.captureException(err, { tags: { route: "create-checkout-session", tier: requestedTier } });
     return Response.json({ error: "Failed to start checkout" }, { status: 500 });
   }
 }

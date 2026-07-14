@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import * as Sentry from "@sentry/nextjs";
 import { getAdminDb } from "../../../../lib/firebaseAdmin";
 import { TRIAL_TIER } from "../../../../lib/planLimits";
 
@@ -94,6 +95,13 @@ export async function POST(request) {
           console.error(
             `Paystack subscription.create: plan_code "${planCode}" didn't match any configured tier env var — defaulting to "${TRIAL_TIER}", needs manual reconciliation`
           );
+          // This is a real customer who paid real money and got the wrong
+          // tier provisioned — worth an actual alert, not just a log line
+          // that nobody's watching.
+          Sentry.captureMessage(
+            `Paystack plan_code mismatch: "${planCode}" — customer defaulted to "${TRIAL_TIER}", needs manual reconciliation`,
+            "error"
+          );
         }
         await userRef.set(
           {
@@ -144,6 +152,7 @@ export async function POST(request) {
     return Response.json({ received: true });
   } catch (err) {
     console.error(`Failed to process Paystack webhook event ${event.event}`, err);
+    Sentry.captureException(err, { tags: { paystackEvent: event.event } });
     return Response.json({ error: "Failed to process event" }, { status: 500 });
   }
 }

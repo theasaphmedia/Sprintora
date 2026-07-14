@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { verifyFirebaseIdToken } from "../../../lib/serverAuth";
 import { getAdminDb } from "../../../lib/firebaseAdmin";
 import { TRIAL_TIER } from "../../../lib/planLimits";
@@ -82,6 +83,7 @@ export async function POST(request) {
     return Response.json({ ok: true, trialEndsAt: trialEndsAt.toISOString() });
   } catch (err) {
     console.error("Failed to start trial", err);
+    Sentry.captureException(err, { tags: { route: "start-trial" } });
     return Response.json({ error: "Failed to start trial" }, { status: 500 });
   }
 }
