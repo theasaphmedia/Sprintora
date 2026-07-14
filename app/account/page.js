@@ -221,15 +221,6 @@ function AccountPageInner() {
                 {billingBusy ? "Starting..." : "Start 14-day free trial"}
               </button>
             )}
-            {isTrialing && (
-              <button
-                className="btn btn-secondary"
-                onClick={() => callBillingApi("/api/create-checkout-session", plan)}
-                disabled={billingBusy}
-              >
-                {billingBusy ? "Starting checkout..." : `Add payment method (${planLabel})`}
-              </button>
-            )}
             {isPro && !isTrialing && (
               <button
                 className="btn btn-secondary"
@@ -241,23 +232,39 @@ function AccountPageInner() {
             )}
           </div>
 
-          {!isPro && trialUsed && (
+          {/*
+            The tier picker is shown whenever there's no active, real
+            Paystack subscription to conflict with — i.e. always EXCEPT
+            when isPro && !isTrialing. That "already fully subscribed" case
+            deliberately hides it: clicking another tier's button would call
+            /api/create-checkout-session again and start a SECOND Paystack
+            subscription alongside the existing one (the route has no
+            upgrade/downgrade logic, it only ever creates new subscriptions).
+            Real plan-switching would need to cancel-then-resubscribe or a
+            proper Paystack plan-change call — not built, so the safe choice
+            is to not expose a control that would silently double-charge.
+            During a trial this is safe: the trial itself never touches
+            Paystack, so there's no existing subscription yet regardless of
+            which tier is being trialed.
+          */}
+          {(!isPro || isTrialing) && (
             <div style={{ marginTop: 20 }}>
               <p style={{ fontSize: 13, color: "var(--slate-500)", marginBottom: 10 }}>
-                Choose a plan to subscribe:
+                {isTrialing ? "Add a payment method to keep your plan after the trial:" : "Plans:"}
               </p>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 {PAID_TIERS.map((tier) => {
                   const t = limitsForPlan(tier);
+                  const isCurrentTrialTier = isTrialing && tier === plan;
                   return (
                     <button
                       key={tier}
-                      className="btn btn-primary"
+                      className={isCurrentTrialTier ? "btn btn-primary" : "btn btn-secondary"}
                       onClick={() => callBillingApi("/api/create-checkout-session", tier)}
                       disabled={billingBusy}
                       style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", minWidth: 140 }}
                     >
-                      <span>{t.label}</span>
+                      <span>{t.label}{isCurrentTrialTier ? " (your trial tier)" : ""}</span>
                       <span style={{ fontWeight: 400, fontSize: 12 }}>
                         ₦{t.priceNgn.toLocaleString()}/mo &middot;{" "}
                         {t.maxMembers} members{t.maxProjects === Infinity ? "" : `, ${t.maxProjects} projects`}

@@ -81,8 +81,8 @@ header{position:sticky;top:0;z-index:100;background:rgba(255,255,255,0.92);backd
 .feature-card p{font-size:14.5px;color:var(--slate-500);}
 
 .pricing{background:var(--slate-50);border-top:1px solid var(--slate-200);border-bottom:1px solid var(--slate-200);}
-.pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;}
-.price-card{background:var(--white);border:1px solid var(--slate-200);border-radius:14px;padding:32px;display:flex;flex-direction:column;}
+.pricing-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;}
+.price-card{background:var(--white);border:1px solid var(--slate-200);border-radius:14px;padding:24px;display:flex;flex-direction:column;}
 .price-card.featured{border:2px solid var(--blue);box-shadow:var(--shadow-lg);position:relative;}
 .price-badge{position:absolute;top:-13px;left:50%;transform:translateX(-50%);background:var(--blue);color:white;font-size:12px;font-weight:700;padding:5px 14px;border-radius:999px;}
 .price-card h3{font-size:19px;margin-bottom:6px;}

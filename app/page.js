@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PLAN_LIMITS } from "../lib/planLimits";
 
 export default function Home() {
   return (
@@ -106,25 +107,60 @@ export default function Home() {
         <div className="container">
           <div className="section-head">
             <div className="eyebrow">Pricing</div>
-            <h2>Free during beta</h2>
-            <p>Sprintora is in early access. Every account is free right now &mdash; paid plans will be introduced later, with plenty of notice.</p>
+            <h2>Simple, flat pricing &mdash; no per-seat surprises</h2>
+            <p>Every plan includes a 14-day free trial with no card required. Pricing is per project team, not per person, so adding teammates never raises your bill mid-tier.</p>
           </div>
           <div className="pricing-grid">
-            <div className="price-card featured">
-              <div className="price-badge">Available now</div>
-              <h3>Early Access</h3>
-              <p className="price-desc">Full product, free while we&apos;re in beta</p>
-              <div className="price-amount"><span className="num">$0</span></div>
+            <div className="price-card">
+              <h3>Free</h3>
+              <p className="price-desc">Try Sprintora with a small team</p>
+              <div className="price-amount"><span className="num">₦0</span></div>
               <ul className="price-list">
-                <li>Unlimited projects &amp; tasks</li>
-                <li>Unlimited team members</li>
+                <li>1 project</li>
+                <li>Up to {PLAN_LIMITS.beta.maxMembers} members per project</li>
+                <li>Full task board, comments, activity feed</li>
                 <li>Email/password or Google sign-in</li>
-                <li>Direct input into what we build next</li>
               </ul>
-              <Link href="/signup" className="btn btn-primary btn-block">Create free account</Link>
+              <Link href="/signup" className="btn btn-secondary btn-block">Create free account</Link>
+            </div>
+            <div className="price-card">
+              <h3>{PLAN_LIMITS.starter.label}</h3>
+              <p className="price-desc">For a small, focused team</p>
+              <div className="price-amount"><span className="num">₦{PLAN_LIMITS.starter.priceNgn.toLocaleString()}</span>/mo</div>
+              <ul className="price-list">
+                <li>{PLAN_LIMITS.starter.maxProjects} projects</li>
+                <li>Up to {PLAN_LIMITS.starter.maxMembers} members per project</li>
+                <li>Everything in Free</li>
+                <li>Email notifications for assignments &amp; due dates</li>
+              </ul>
+              <Link href="/signup" className="btn btn-secondary btn-block">Start free trial</Link>
+            </div>
+            <div className="price-card featured">
+              <div className="price-badge">Most popular &mdash; free trial default</div>
+              <h3>{PLAN_LIMITS.team.label}</h3>
+              <p className="price-desc">For a growing team running multiple projects</p>
+              <div className="price-amount"><span className="num">₦{PLAN_LIMITS.team.priceNgn.toLocaleString()}</span>/mo</div>
+              <ul className="price-list">
+                <li>Unlimited projects</li>
+                <li>Up to {PLAN_LIMITS.team.maxMembers} members per project</li>
+                <li>Everything in Starter</li>
+                <li>14-day free trial defaults to this tier</li>
+              </ul>
+              <Link href="/signup" className="btn btn-primary btn-block">Start free trial</Link>
+            </div>
+            <div className="price-card">
+              <h3>{PLAN_LIMITS.business.label}</h3>
+              <p className="price-desc">For larger teams and organizations</p>
+              <div className="price-amount"><span className="num">₦{PLAN_LIMITS.business.priceNgn.toLocaleString()}</span>/mo</div>
+              <ul className="price-list">
+                <li>Unlimited projects</li>
+                <li>Up to {PLAN_LIMITS.business.maxMembers} members per project</li>
+                <li>Everything in Team</li>
+              </ul>
+              <Link href="/signup" className="btn btn-secondary btn-block">Start free trial</Link>
             </div>
           </div>
-          <p className="beta-note">No credit card required. We&apos;ll email everyone before any pricing changes take effect.</p>
+          <p className="beta-note">No credit card required for the trial &mdash; you&apos;re only asked for payment details if you decide to keep your plan after 14 days.</p>
         </div>
       </section>
 
