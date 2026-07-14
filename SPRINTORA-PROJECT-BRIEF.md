@@ -264,6 +264,27 @@ git commit -m "Add DIY Firestore backup export via email, no Blaze plan required
 git push
 ```
 
+## Session: presence indicators, Firestore heartbeat approach (2026-07-14, same day, #37 resolved)
+
+User's decision: build both eventually, start with whichever needs the least new setup right now (pre-pilot, wanted to avoid another console-config detour). Built the Firestore heartbeat version — Realtime Database remains the documented future upgrade path once Blaze happens anyway.
+
+- **`sprintora-firestore-rules.txt`**: new `projects/{projectId}/presence/{uid}` subcollection rule. Any project member can read every presence doc in that project; each member can only ever write their own (doc ID must match `request.auth.uid`). **Needs republishing via the Firebase Console Rules tab before it's actually enforced** — same as every prior rules change this project.
+- **`app/dashboard/[projectId]/page.js`**: 
+  - A heartbeat effect writes `{ displayName, email, lastSeen: serverTimestamp() }` to the current user's own presence doc immediately on mount and every 25 seconds while the project page is open.
+  - A listener effect subscribes to the whole `presence` subcollection for the project.
+  - A separate 15-second ticking clock (`nowTick`) forces the "who's online" computation to re-evaluate over time even without a new Firestore write — otherwise someone's status would only update when *someone else's* heartbeat happened to trigger a re-render.
+  - "Online" = a presence doc with `lastSeen` within the last 60 seconds. Shown as a small green dot + count + name list next to the member count in the project header, visible regardless of which tab is active.
+- **Explicit tradeoff, stated plainly**: this is heartbeat-based staleness, not true connection detection. Someone who closes their laptop lid or loses network without a clean tab close can appear "online" for up to ~60 seconds after they're actually gone. Firestore has no `onDisconnect` primitive — only Realtime Database does — so this gap is the real cost of avoiding RTDB right now, not a bug to fix later within this approach.
+- **Write volume**: roughly 2–3 extra writes/minute per person who has a project page open, only while it's open. At pilot scale (a handful of trial partners), this is nowhere near the 20,000/day free Spark quota — worth re-checking the math if this ever needs to scale to dozens of concurrently active users.
+
+Deploy command (also republish the rules file after this deploys — same two-step pattern as every prior rules change):
+```
+cd "C:\Users\USER\Documents\AI\sprintora-app"
+git add -A
+git commit -m "Add presence indicators (Firestore heartbeat)"
+git push
+```
+
 ## Session: bus-factor documentation (2026-07-14, same day, continued while user was away)
 
 New file: **`HANDBOOK.md`** (repo root) — a from-scratch technical reference distinct from this brief. This brief is a chronological session log (great for "what happened and why," hard to skim as "how do I actually work on this app today"); the handbook is the opposite — a current-state map for anyone (including the user, months from now) picking this codebase up cold. Covers: architecture map (verified against the real file tree, not memory), where each piece of infrastructure actually lives and who can access it, env var inventory (names only, no values), how deploys work, biggest real risks in priority order, and an explicit "if you're picking this up cold" pointer back to this brief for the "why." Doesn't duplicate the brief's history.

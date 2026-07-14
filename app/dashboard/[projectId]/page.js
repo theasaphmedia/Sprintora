@@ -11,6 +11,7 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  setDoc,
   query,
   where,
   orderBy,
@@ -90,6 +91,17 @@ function buildCalendarWeeks(year, month) {
   return weeks;
 }
 
+// Presence is a Firestore heartbeat, not Realtime Database's onDisconnect —
+// Firestore has no connection-close primitive, so "online" is inferred
+// entirely from how recently a heartbeat write landed. Write more often
+// than the staleness window so normal network jitter doesn't flicker
+// someone's status; the gap between the two is the tradeoff for not using
+// RTDB (an offline person can appear "online" for up to STALE_MS after
+// their last real heartbeat, e.g. closing a laptop lid without a clean
+// disconnect signal).
+const HEARTBEAT_INTERVAL_MS = 25 * 1000;
+const PRESENCE_STALE_MS = 60 * 1000;
+
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_LABELS = [
   "January", "February", "March", "April", "May", "June",
@@ -155,6 +167,8 @@ function ProjectBoardPageInner() {
     const d = new Date();
     return { year: d.getFullYear(), month: d.getMonth() };
   });
+  const [presenceDocs, setPresenceDocs] = useState([]);
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   useEffect(() => {
     if (loading) return;
@@ -254,6 +268,71 @@ function ProjectBoardPageInner() {
     });
     return () => unsub();
   }, [project?.ownerId]);
+
+  // Heartbeat writer: while this page is open, keep this user's own
+  // presence doc fresh. Writes immediately on mount (so you show up as
+  // online right away, not after the first interval tick) and every
+  // HEARTBEAT_INTERVAL_MS after that. Deliberately does NOT delete the doc
+  // on unmount — a clean unmount isn't guaranteed on tab close anyway, so
+  // the staleness check elsewhere is what actually makes someone "go
+  // offline," not this cleanup.
+  useEffect(() => {
+    if (!user || !projectId) return;
+    let cancelled = false;
+    async function beat() {
+      try {
+        await setDoc(
+          doc(db, "projects", projectId, "presence", user.uid),
+          {
+            displayName: user.displayName || "",
+            email: user.email || "",
+            lastSeen: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        // Non-fatal — presence is a nice-to-have, not core functionality.
+        // A failed heartbeat just means this user quietly doesn't show as
+        // online to others for a while, not a broken page.
+        console.error("Failed to write presence heartbeat", err);
+      }
+    }
+    beat();
+    const interval = setInterval(() => {
+      if (!cancelled) beat();
+    }, HEARTBEAT_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [user, projectId]);
+
+  // Listens to every member's presence doc for this project. Staleness
+  // (who currently counts as "online") is computed at render time against
+  // `nowTick`, not here — a doc going stale doesn't itself trigger a new
+  // snapshot, so a separate ticking clock (below) is what keeps the
+  // displayed online list honest as time passes with no new writes.
+  useEffect(() => {
+    if (!projectId || !user) {
+      setPresenceDocs([]);
+      return;
+    }
+    const unsub = onSnapshot(
+      collection(db, "projects", projectId, "presence"),
+      (snap) => {
+        setPresenceDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => {
+        console.error("Failed to load presence", err);
+      }
+    );
+    return () => unsub();
+  }, [projectId, user]);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNowTick(Date.now()), 15 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     // Only the owner ever sees this (gated below in the JSX too), and every
@@ -666,6 +745,13 @@ function ProjectBoardPageInner() {
     }
   }
 
+  const onlineMembers = presenceDocs
+    .filter((p) => {
+      const lastSeenMs = p.lastSeen?.toMillis?.();
+      return lastSeenMs && nowTick - lastSeenMs < PRESENCE_STALE_MS;
+    })
+    .map((p) => ({ uid: p.id, label: p.displayName || p.email || "Someone" }));
+
   const calendarWeeks = buildCalendarWeeks(calendarMonth.year, calendarMonth.month);
   const todayStr = new Date().toISOString().slice(0, 10);
   const tasksByDueDate = {};
@@ -737,8 +823,17 @@ function ProjectBoardPageInner() {
           <p style={{ color: "var(--red)", fontSize: 13, marginBottom: 12 }}>{loadError}</p>
         )}
         <h1 style={{ fontSize: 24, marginBottom: 4 }}>{project.name}</h1>
-        <p style={{ fontSize: 13, color: "var(--slate-500)" }}>
-          {members.length} member{members.length === 1 ? "" : "s"}
+        <p style={{ fontSize: 13, color: "var(--slate-500)", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span>{members.length} member{members.length === 1 ? "" : "s"}</span>
+          {onlineMembers.length > 0 && (
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span className="presence-dot" />
+              {onlineMembers.length} online now
+              <span style={{ color: "var(--slate-300)" }}>
+                ({onlineMembers.map((m) => m.label).join(", ")})
+              </span>
+            </span>
+          )}
         </p>
 
         <div className="tabs">

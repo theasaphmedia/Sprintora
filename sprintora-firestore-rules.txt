@@ -185,6 +185,23 @@ service cloud.firestore {
           allow delete: if false;
         }
       }
+
+      // --- presence (subcollection of projects) ---
+      // Doc ID is the user's own uid — a heartbeat pattern, not RTDB's
+      // onDisconnect (Firestore has no connection-close primitive), so
+      // "online" is inferred client-side from how recently lastSeen was
+      // written, not a hard true/false this rules file tracks. Any member
+      // can read every presence doc in a project (to show who's online),
+      // but can only ever write their OWN doc — no one can fake someone
+      // else's presence.
+      match /presence/{uid} {
+        allow read: if request.auth != null
+          && request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.memberIds;
+        allow create, update: if request.auth != null
+          && request.auth.uid == uid
+          && request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.memberIds;
+        allow delete: if request.auth != null && request.auth.uid == uid;
+      }
     }
   }
 }
