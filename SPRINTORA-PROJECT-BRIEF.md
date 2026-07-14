@@ -158,6 +158,33 @@ rm lib/stripe.js
 rm -rf app/api/webhooks/stripe
 ```
 
+## Session: legal baseline + quick-win batch (2026-07-14, same day as pricing)
+
+Triggered by a deliberate three-part self-review (sophistication/competitiveness, blind spots, pre-mortem) — full reasoning lives in chat history, not repeated here. Six items were picked as an executable first batch; the rest were catalogued as tasks for later, not built yet (see "Not yet built" below).
+
+**Legal (built):**
+- Signup (`app/signup/page.js`) now requires a checked "I agree to the Terms of Service and Privacy Policy" checkbox before either the email/password form or the Google sign-in button is enabled. Previously, real PII was being collected with zero consent capture.
+- `app/terms/page.js` and `app/privacy/page.js` — the draft `.docx` content is now live, reachable in-app pages (linked from the landing page footer and from the signup checkbox), instead of sitting as unlinked files nobody could actually read. **Still not a finished legal document** — every `[COMPANY LEGAL NAME]`, governing-law, and rights-section placeholder from the original drafts is left visibly unresolved on purpose, with a yellow "preliminary, not yet lawyer-reviewed" banner at the top of each page. Publishing the draft doesn't substitute for the lawyer review both files still need.
+- **Not built, not mine to build**: whether the operating entity should be a CAC Business Name or a Limited Liability Company (real liability-exposure difference, user's decision) and the actual lawyer review of both documents.
+
+**Anti-abuse (built):**
+- `lib/rateLimit.js` — new, Firestore-backed (not in-memory, since Vercel functions are stateless across invocations) fixed-window rate limiter.
+- `/api/start-trial` now allows at most 3 trial starts per IP per 24 hours. Doesn't stop a determined attacker rotating IPs/VPNs, and doesn't touch signup itself (which happens client-side against Firebase Auth directly, outside any route this code can gate) — but blunts the casual case of one person spinning up several trial accounts from one machine.
+
+**Product polish (built):**
+- `lib/projectTemplates.js` + dashboard "Create project" form — new template picker (Blank / Sprint board / Bug tracker / Marketing campaign) that seeds a handful of starter "todo" tasks in the new project. Purely a convenience; every seeded task is a normal task, editable/deletable like any other.
+- Dashboard empty state (zero projects) rewritten from a single line of text into a proper onboarding card explaining what a project is and what to expect.
+- `components/CommandPalette.js` — new, mounted globally in `app/layout.js`. Cmd+K / Ctrl+K (or the visible "⌘K Search" button in the dashboard header) opens a fuzzy-filtered jump-to list: every project you're a member of, Dashboard, Account, Log out. Deliberately navigation-only, not action-execution (doesn't create tasks/projects from inside the palette) — kept scoped to what a command palette is used for most.
+
+**Not yet built — catalogued as tasks, prioritized, waiting on either more scoping or a user decision:**
+- List and Calendar views (only Kanban exists today)
+- Lightweight per-project insights panel (done/total, overdue count)
+- Presence indicators (who's viewing a project)
+- Error monitoring/alerting (nothing surfaces production errors today)
+- Firestore backup strategy (tied to the deferred Blaze-plan decision)
+- Reducing bus-factor risk (documentation beyond this brief)
+- Backlog, deliberately deferred further: third-party integrations, AI-assisted features, full analytics dashboards — all real, larger builds, held until there's a signal (real users, real requests) pointing at which one actually matters first.
+
 ## Suggested next step for whoever picks this up
 
 Tier 2 is fully closed out (comments, activity feed, search, email notifications). Tier 3's pricing/gating item is now code-complete — three tiers, real member-cap enforcement, tier-aware checkout and webhook — pending only the Paystack Dashboard setup above (three Plans created, three env vars added, rules republished) and live end-to-end testing of the tier-picker flow. Immediate next steps in order: (1) get Paystack compliance approved (submitted, up to 7 days as of this brief), (2) create the three Plans and wire the env vars, (3) republish the Firestore rules, (4) test the full loop per the testing checklist above. After that: AI-assisted features (lower priority, see Tier 3 reasoning above), the true per-seat billing revisit once there's real usage data, or re-verify the task-deletion orphan-cleanup fix via Firestore console (still only code-reviewed, carried over from several sessions ago).

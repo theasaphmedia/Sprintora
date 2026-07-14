@@ -103,6 +103,16 @@ header{position:sticky;top:0;z-index:100;background:rgba(255,255,255,0.92);backd
 footer{background:var(--navy-dark);color:rgba(255,255,255,0.6);padding:40px 24px;text-align:center;font-size:13px;}
 footer a{color:rgba(255,255,255,0.8);}
 
+.legal-page{padding:56px 0 96px;}
+.legal-container{max-width:760px;}
+.legal-container h1{font-size:32px;margin-bottom:16px;}
+.legal-container h2{font-size:19px;margin-top:32px;margin-bottom:10px;}
+.legal-container p{margin-bottom:14px;font-size:15px;}
+.legal-list{margin:0 0 14px 20px;font-size:15px;}
+.legal-list li{margin-bottom:6px;}
+.legal-draft-notice{background:#fef3c7;border:1px solid #fde68a;color:#92400e;padding:14px 16px;border-radius:8px;font-size:13.5px;margin-bottom:8px;}
+.legal-updated{color:var(--slate-500);font-size:13px;margin-bottom:28px;}
+
 .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--slate-50);padding:24px;}
 .auth-card{width:100%;max-width:400px;background:var(--white);border:1px solid var(--slate-200);border-radius:14px;padding:36px;box-shadow:var(--shadow-md);}
 .auth-card h1{font-size:22px;margin-bottom:6px;text-align:center;}
@@ -129,6 +139,7 @@ footer a{color:rgba(255,255,255,0.8);}
 .project-card p{font-size:13px;color:var(--slate-500);}
 .new-project-form{display:flex;gap:10px;margin-top:24px;}
 .new-project-form input{flex:1;padding:11px 13px;border:1px solid var(--slate-300);border-radius:8px;font-size:14px;}
+.new-project-form select{padding:11px 13px;border:1px solid var(--slate-300);border-radius:8px;font-size:14px;background:var(--white);color:var(--slate-700);}
 
 .board{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:24px;}
 .board-col{background:var(--white);border:1px solid var(--slate-200);border-radius:12px;padding:16px;min-height:200px;}

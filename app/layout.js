@@ -1,4 +1,5 @@
 import "./globals.css";
+import CommandPalette from "../components/CommandPalette";
 
 export const metadata = {
   title: "Sprintora — Project management that scales with your team",
@@ -9,7 +10,10 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        <CommandPalette />
+      </body>
     </html>
   );
 }

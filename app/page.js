@@ -174,6 +174,10 @@ export default function Home() {
 
       <footer>
         &copy; 2026 Sprintora &mdash; currently in early access. Built with Firebase &amp; Vercel.
+        <div style={{ marginTop: 10, display: "flex", gap: 16, justifyContent: "center" }}>
+          <Link href="/terms">Terms of Service</Link>
+          <Link href="/privacy">Privacy Policy</Link>
+        </div>
       </footer>
     </>
   );

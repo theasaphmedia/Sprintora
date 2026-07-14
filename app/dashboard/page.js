@@ -18,6 +18,7 @@ import { auth, db } from "../../lib/firebase";
 import { useAuth } from "../../lib/useAuth";
 import { acceptPendingInvites } from "../../lib/invites";
 import { limitsForPlan } from "../../lib/planLimits";
+import { PROJECT_TEMPLATES, TEMPLATE_KEYS } from "../../lib/projectTemplates";
 
 export default function DashboardPage() {
   const { user, loading } = useAuth();
@@ -35,6 +36,7 @@ export default function DashboardPage() {
   const [taskIndex, setTaskIndex] = useState(null);
   const [taskIndexLoading, setTaskIndexLoading] = useState(false);
   const [profile, setProfile] = useState(null);
+  const [templateKey, setTemplateKey] = useState("blank");
 
   useEffect(() => {
     if (loading) return;
@@ -189,14 +191,28 @@ export default function DashboardPage() {
     setCreating(true);
     setCreateError("");
     try {
-      await addDoc(collection(db, "projects"), {
+      const projectRef = await addDoc(collection(db, "projects"), {
         name: newName.trim(),
         ownerId: user.uid,
         memberIds: [user.uid],
         roles: { [user.uid]: "owner" },
         createdAt: serverTimestamp(),
       });
+      // Seed starter tasks for the chosen template (none for "blank").
+      // Sequential, not a batch write — the list is short (a handful of
+      // tasks at most) and this reuses the exact same task-shape used
+      // everywhere else in the app, rather than introducing a second
+      // code path for "how a task gets created."
+      const starterTasks = PROJECT_TEMPLATES[templateKey]?.tasks || [];
+      for (const title of starterTasks) {
+        await addDoc(collection(db, "projects", projectRef.id, "tasks"), {
+          title,
+          status: "todo",
+          createdAt: serverTimestamp(),
+        });
+      }
       setNewName("");
+      setTemplateKey("blank");
     } catch (err) {
       // Previously uncaught: a failed create silently re-enabled the button
       // with no indication anything went wrong.
@@ -216,6 +232,13 @@ export default function DashboardPage() {
       <div className="app-header">
         <div className="logo"><div className="logo-mark">S</div>Sprintora</div>
         <div style={{ display: "flex", gap: 10 }}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => window.dispatchEvent(new CustomEvent("open-command-palette"))}
+            title="Jump to a project or page"
+          >
+            &#8984;K Search
+          </button>
           <Link href="/account" className="btn btn-secondary">Account</Link>
           <button
             className="btn btn-secondary"
@@ -279,6 +302,18 @@ export default function DashboardPage() {
             onChange={(e) => setNewName(e.target.value)}
             disabled={atProjectLimit}
           />
+          <select
+            value={templateKey}
+            onChange={(e) => setTemplateKey(e.target.value)}
+            disabled={atProjectLimit}
+            style={{ maxWidth: 180 }}
+          >
+            {TEMPLATE_KEYS.map((key) => (
+              <option key={key} value={key}>
+                {PROJECT_TEMPLATES[key].label}
+              </option>
+            ))}
+          </select>
           <button className="btn btn-primary" type="submit" disabled={creating || atProjectLimit}>
             {creating ? "Creating..." : "Create project"}
           </button>
@@ -346,9 +381,19 @@ export default function DashboardPage() {
             )}
           </div>
         ) : projects.length === 0 && !listError ? (
-          <p style={{ color: "var(--slate-500)", marginTop: 24 }}>
-            No projects yet &mdash; create your first one above.
-          </p>
+          <div className="project-card" style={{ marginTop: 24, textAlign: "center", padding: "40px 24px" }}>
+            <h3 style={{ marginBottom: 8 }}>Create your first project</h3>
+            <p style={{ color: "var(--slate-500)", marginBottom: 20, maxWidth: 440, marginLeft: "auto", marginRight: "auto" }}>
+              A project is a board your team works from &mdash; tasks, comments, and
+              activity all live inside it. Type a name above, pick a template if one
+              fits (or start blank), and you&apos;re in.
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: 24, fontSize: 13, color: "var(--slate-500)", flexWrap: "wrap" }}>
+              <span>&#9989; Invite teammates once it&apos;s created</span>
+              <span>&#9989; Templates seed starter tasks for you</span>
+              <span>&#9989; Search finds tasks across every project</span>
+            </div>
+          </div>
         ) : (
           <div className="projects-grid">
             {projects.map((p) => (

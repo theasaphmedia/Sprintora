@@ -20,6 +20,7 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [agreed, setAgreed] = useState(false);
 
   async function createUserDoc(user, displayName) {
     await setDoc(doc(db, "users", user.uid), {
@@ -33,6 +34,10 @@ export default function SignupPage() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+    if (!agreed) {
+      setError("Please agree to the Terms of Service and Privacy Policy to continue.");
+      return;
+    }
     if (password.length < 6) {
       setError("Password must be at least 6 characters.");
       return;
@@ -63,6 +68,10 @@ export default function SignupPage() {
 
   async function handleGoogle() {
     setError("");
+    if (!agreed) {
+      setError("Please agree to the Terms of Service and Privacy Policy to continue.");
+      return;
+    }
     setBusy(true);
     try {
       const cred = await signInWithPopup(auth, new GoogleAuthProvider());
@@ -95,12 +104,31 @@ export default function SignupPage() {
             <label>Password</label>
             <input type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
-          <button className="btn btn-primary btn-block" type="submit" disabled={busy}>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "14px 0", fontSize: 13, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              I agree to the{" "}
+              <Link href="/terms" target="_blank" style={{ textDecoration: "underline" }}>
+                Terms of Service
+              </Link>{" "}
+              and{" "}
+              <Link href="/privacy" target="_blank" style={{ textDecoration: "underline" }}>
+                Privacy Policy
+              </Link>
+              .
+            </span>
+          </label>
+          <button className="btn btn-primary btn-block" type="submit" disabled={busy || !agreed}>
             {busy ? "Creating account..." : "Create account"}
           </button>
         </form>
         <div className="divider">or</div>
-        <button className="btn btn-secondary btn-block" onClick={handleGoogle} disabled={busy}>
+        <button className="btn btn-secondary btn-block" onClick={handleGoogle} disabled={busy || !agreed}>
           Continue with Google
         </button>
         <p className="auth-switch">Already have an account? <Link href="/login">Log in</Link></p>
