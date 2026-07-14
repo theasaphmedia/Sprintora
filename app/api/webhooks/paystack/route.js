@@ -1,5 +1,22 @@
 import crypto from "crypto";
 import { getAdminDb } from "../../../../lib/firebaseAdmin";
+import { TRIAL_TIER } from "../../../../lib/planLimits";
+
+// Reverse of TIER_ENV_VARS in create-checkout-session/route.js: given the
+// plan_code Paystack echoes back on a subscription event, figure out which
+// internal tier it corresponds to. Deliberately does NOT trust the `tier`
+// value in the checkout metadata — that's client-supplied and only meant
+// for debugging. The plan_code on the subscription object is set by
+// Paystack itself from what was actually charged, so it can't be spoofed.
+function tierForPlanCode(planCode) {
+  const pairs = [
+    ["starter", process.env.PAYSTACK_PLAN_CODE_STARTER],
+    ["team", process.env.PAYSTACK_PLAN_CODE_TEAM],
+    ["business", process.env.PAYSTACK_PLAN_CODE_BUSINESS],
+  ];
+  const match = pairs.find(([, code]) => code && code === planCode);
+  return match ? match[0] : null;
+}
 
 // Called by Paystack's servers, not by any signed-in user. Authenticity
 // comes from the x-paystack-signature header: an HMAC SHA512 of the exact
@@ -55,8 +72,8 @@ export async function POST(request) {
       // plan-code checkout — the only place that ever initiates a real
       // charge in this app; the trial itself never touches Paystack at
       // all, see /api/start-trial). Nothing to do here directly —
-      // subscription.create below is what actually flips plan to "pro,"
-      // since that's the event that confirms the subscription object
+      // subscription.create below is what actually flips plan to the paid
+      // tier, since that's the event that confirms the subscription object
       // itself was created, not just that a payment went through.
       case "charge.success":
         break;
@@ -64,9 +81,23 @@ export async function POST(request) {
       case "subscription.create": {
         const userRef = await findUserRefByCustomerCode(event.data.customer?.customer_code);
         if (!userRef) break;
+        const planCode = event.data.plan?.plan_code || event.data.plan_code;
+        const tier = tierForPlanCode(planCode);
+        if (!tier) {
+          // A real payment came in for a plan_code that doesn't match any
+          // of our three configured tiers — could be a stale/renamed Plan
+          // in the Paystack dashboard, or an env var typo. Don't silently
+          // drop a paying customer's upgrade: grant the trial tier as a
+          // safe default so they get real access today, but log loudly so
+          // this gets manually reconciled to the tier they actually paid
+          // for, rather than assuming the default is correct long-term.
+          console.error(
+            `Paystack subscription.create: plan_code "${planCode}" didn't match any configured tier env var — defaulting to "${TRIAL_TIER}", needs manual reconciliation`
+          );
+        }
         await userRef.set(
           {
-            plan: "pro",
+            plan: tier || TRIAL_TIER,
             paystackSubscriptionCode: event.data.subscription_code,
             subscriptionStatus: "active",
           },

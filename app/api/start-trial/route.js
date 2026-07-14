@@ -1,5 +1,6 @@
 import { verifyFirebaseIdToken } from "../../../lib/serverAuth";
 import { getAdminDb } from "../../../lib/firebaseAdmin";
+import { TRIAL_TIER } from "../../../lib/planLimits";
 
 // Starts the 14-day trial with zero payment info collected — no Paystack
 // interaction at all here, purely a Firestore write. This is the whole
@@ -48,7 +49,7 @@ export async function POST(request) {
 
     await userRef.set(
       {
-        plan: "pro",
+        plan: TRIAL_TIER,
         subscriptionStatus: "trialing",
         trialEndsAt: trialEndsAt.toISOString(),
         trialUsed: true,

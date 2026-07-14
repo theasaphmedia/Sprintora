@@ -5,6 +5,7 @@ import Link from "next/link";
 import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
 import { useAuth } from "../../lib/useAuth";
+import { PAID_TIERS, limitsForPlan } from "../../lib/planLimits";
 
 const SUBSCRIPTION_STATUS_LABELS = {
   trialing: "Trial",
@@ -45,7 +46,7 @@ function AccountPageInner() {
       return;
     }
     // Live-updating rather than a one-time read: after returning from
-    // Paystack Checkout, the webhook that actually flips `plan` to "pro"
+    // Paystack Checkout, the webhook that actually flips `plan` to the paid tier
     // can take a few seconds to arrive. onSnapshot means the page updates
     // on its own the moment it does, instead of showing a stale plan until
     // a manual refresh. Also picks up /api/start-trial's write instantly,
@@ -76,15 +77,22 @@ function AccountPageInner() {
 
   // Used for the two flows that redirect to a hosted Paystack page:
   // subscribing for real (create-checkout-session) and managing an
-  // existing subscription (create-portal-session).
-  async function callBillingApi(path) {
+  // existing subscription (create-portal-session). `tier` is only relevant
+  // for checkout — omit it for the portal session, and omit it when adding
+  // a payment method mid-trial so the route defaults to keeping the tier
+  // already being trialed (see TRIAL_TIER fallback in the route itself).
+  async function callBillingApi(path, tier) {
     setBillingMsg("");
     setBillingBusy(true);
     try {
       const idToken = await auth.currentUser?.getIdToken();
       const res = await fetch(path, {
         method: "POST",
-        headers: { Authorization: `Bearer ${idToken}` },
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          ...(tier ? { "Content-Type": "application/json" } : {}),
+        },
+        ...(tier ? { body: JSON.stringify({ tier }) } : {}),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.url) {
@@ -124,7 +132,8 @@ function AccountPageInner() {
   if (loading || !user) return <div className="loading-screen">Loading...</div>;
 
   const plan = profile?.plan || "beta";
-  const isPro = plan === "pro";
+  const isPro = plan !== "beta";
+  const planLabel = limitsForPlan(plan).label;
   const subscriptionStatus = profile?.subscriptionStatus;
   const isTrialing = subscriptionStatus === "trialing";
   const trialUsed = !!profile?.trialUsed;
@@ -166,7 +175,7 @@ function AccountPageInner() {
 
         <div className="project-card">
           <p style={{ fontSize: 13, color: "var(--slate-500)", marginBottom: 4 }}>Current plan</p>
-          <h3>{isPro ? (isTrialing ? "Pro (Trial)" : "Pro") : "Free (Early Access Beta)"}</h3>
+          <h3>{isPro ? (isTrialing ? `${planLabel} (Trial)` : planLabel) : "Free (Early Access Beta)"}</h3>
 
           {subscriptionStatus && (
             <p style={{ marginTop: 4, fontSize: 13, color: "var(--slate-500)" }}>
@@ -185,16 +194,16 @@ function AccountPageInner() {
 
           {!isPro && !trialUsed && (
             <p style={{ marginTop: 8 }}>
-              Sprintora is free during early access. Start a 14-day Pro trial with no card
-              required &mdash; you&apos;ll only be asked for payment details if you decide to
-              keep it after the trial ends.
+              Sprintora is free during early access. Start a 14-day {limitsForPlan("team").label} trial
+              with no card required &mdash; you&apos;ll only be asked for payment details if you
+              decide to keep it after the trial ends.
             </p>
           )}
 
           {!isPro && trialUsed && subscriptionStatus === "expired" && (
             <p style={{ marginTop: 8 }}>
               Your free trial ended without a payment method on file, so you&apos;re back on
-              the free plan. Subscribe below to get Pro access again.
+              the free plan. Pick a plan below to get paid access again.
             </p>
           )}
 
@@ -212,22 +221,13 @@ function AccountPageInner() {
                 {billingBusy ? "Starting..." : "Start 14-day free trial"}
               </button>
             )}
-            {!isPro && trialUsed && (
-              <button
-                className="btn btn-primary"
-                onClick={() => callBillingApi("/api/create-checkout-session")}
-                disabled={billingBusy}
-              >
-                {billingBusy ? "Starting checkout..." : "Subscribe to Pro"}
-              </button>
-            )}
             {isTrialing && (
               <button
                 className="btn btn-secondary"
-                onClick={() => callBillingApi("/api/create-checkout-session")}
+                onClick={() => callBillingApi("/api/create-checkout-session", plan)}
                 disabled={billingBusy}
               >
-                {billingBusy ? "Starting checkout..." : "Add payment method"}
+                {billingBusy ? "Starting checkout..." : `Add payment method (${planLabel})`}
               </button>
             )}
             {isPro && !isTrialing && (
@@ -240,6 +240,34 @@ function AccountPageInner() {
               </button>
             )}
           </div>
+
+          {!isPro && trialUsed && (
+            <div style={{ marginTop: 20 }}>
+              <p style={{ fontSize: 13, color: "var(--slate-500)", marginBottom: 10 }}>
+                Choose a plan to subscribe:
+              </p>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {PAID_TIERS.map((tier) => {
+                  const t = limitsForPlan(tier);
+                  return (
+                    <button
+                      key={tier}
+                      className="btn btn-primary"
+                      onClick={() => callBillingApi("/api/create-checkout-session", tier)}
+                      disabled={billingBusy}
+                      style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", minWidth: 140 }}
+                    >
+                      <span>{t.label}</span>
+                      <span style={{ fontWeight: 400, fontSize: 12 }}>
+                        ₦{t.priceNgn.toLocaleString()}/mo &middot;{" "}
+                        {t.maxMembers} members{t.maxProjects === Infinity ? "" : `, ${t.maxProjects} projects`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="project-card" style={{ marginTop: 20 }}>

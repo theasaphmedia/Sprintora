@@ -1,6 +1,17 @@
 import { verifyFirebaseIdToken } from "../../../lib/serverAuth";
 import { paystackFetch } from "../../../lib/paystack";
 import { getAdminDb } from "../../../lib/firebaseAdmin";
+import { PAID_TIERS, TRIAL_TIER } from "../../../lib/planLimits";
+
+// Maps each paid tier to the env var holding its Paystack plan code. Kept
+// here (server-only file) rather than in lib/planLimits.js, which is also
+// imported by client components — plan codes aren't secret the way the API
+// key is, but there's no reason for them to be in the client bundle either.
+const TIER_ENV_VARS = {
+  starter: "PAYSTACK_PLAN_CODE_STARTER",
+  team: "PAYSTACK_PLAN_CODE_TEAM",
+  business: "PAYSTACK_PLAN_CODE_BUSINESS",
+};
 
 // The real, immediate-charge subscribe flow — adds a card and starts real
 // billing right away via Paystack's standard "initialize transaction with a
@@ -26,10 +37,26 @@ export async function POST(request) {
   const uid = payload.sub;
   const email = payload.email;
 
-  const planCode = process.env.PAYSTACK_PLAN_CODE;
+  // Which tier to subscribe to. Defaults to the trial tier so "Add payment
+  // method" mid-trial (which doesn't send a tier at all) keeps the same
+  // tier the user is already trialing, rather than silently downgrading
+  // them to Starter.
+  let requestedTier = TRIAL_TIER;
+  try {
+    const body = await request.json();
+    if (body?.tier) requestedTier = body.tier;
+  } catch {
+    // No/invalid JSON body — fine, fall back to the trial tier default.
+  }
+  if (!PAID_TIERS.includes(requestedTier)) {
+    return Response.json({ error: `Unknown plan tier: ${requestedTier}` }, { status: 400 });
+  }
+
+  const envVar = TIER_ENV_VARS[requestedTier];
+  const planCode = process.env[envVar];
   if (!planCode) {
-    console.error("PAYSTACK_PLAN_CODE is not configured");
-    return Response.json({ error: "Billing not configured" }, { status: 500 });
+    console.error(`${envVar} is not configured`);
+    return Response.json({ error: "Billing not configured for this plan" }, { status: 500 });
   }
 
   let db;
@@ -70,7 +97,11 @@ export async function POST(request) {
         amount: "100",
         plan: planCode,
         callback_url: `${origin}/account?checkout=success`,
-        metadata: JSON.stringify({ firebaseUid: uid }),
+        // tier is included for debugging/support only — the webhook never
+        // trusts this metadata for what to actually grant. It resolves the
+        // tier itself from the plan_code Paystack echoes back on the
+        // subscription.create event, which can't be spoofed by the client.
+        metadata: JSON.stringify({ firebaseUid: uid, tier: requestedTier }),
       }),
     });
 

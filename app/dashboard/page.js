@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   collection,
   addDoc,
+  doc,
   query,
   where,
   onSnapshot,
@@ -16,6 +17,7 @@ import { signOut, sendEmailVerification } from "firebase/auth";
 import { auth, db } from "../../lib/firebase";
 import { useAuth } from "../../lib/useAuth";
 import { acceptPendingInvites } from "../../lib/invites";
+import { limitsForPlan } from "../../lib/planLimits";
 
 export default function DashboardPage() {
   const { user, loading } = useAuth();
@@ -32,6 +34,7 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [taskIndex, setTaskIndex] = useState(null);
   const [taskIndexLoading, setTaskIndexLoading] = useState(false);
+  const [profile, setProfile] = useState(null);
 
   useEffect(() => {
     if (loading) return;
@@ -44,6 +47,18 @@ export default function DashboardPage() {
       acceptPendingInvites(user).finally(() => setInvitesChecked(true));
     }
   }, [user, loading, router, invitesChecked]);
+
+  // Needed to know the caller's plan for the project-count cap below (see
+  // handleCreate). This is a soft, UI-level check only — see the comment
+  // on PLAN_LIMITS.maxProjects in lib/planLimits.js for why it isn't
+  // enforced in the Firestore rules too.
+  useEffect(() => {
+    if (loading || !user) return;
+    const unsub = onSnapshot(doc(db, "users", user.uid), (snap) => {
+      setProfile(snap.exists() ? snap.data() : null);
+    });
+    return () => unsub();
+  }, [user, loading]);
 
   async function handleResendVerification() {
     if (!user) return;
@@ -158,9 +173,19 @@ export default function DashboardPage() {
     ? (taskIndex || []).filter((t) => t.title.toLowerCase().includes(trimmedQuery))
     : [];
 
+  const ownedProjectsCount = projects.filter((p) => p.ownerId === user?.uid).length;
+  const planLimits = limitsForPlan(profile?.plan);
+  const atProjectLimit = ownedProjectsCount >= planLimits.maxProjects;
+
   async function handleCreate(e) {
     e.preventDefault();
     if (!newName.trim() || !user) return;
+    if (atProjectLimit) {
+      setCreateError(
+        `You've reached the ${planLimits.maxProjects} project limit on the ${planLimits.label} plan. Upgrade on the Account page to create more.`
+      );
+      return;
+    }
     setCreating(true);
     setCreateError("");
     try {
@@ -252,11 +277,18 @@ export default function DashboardPage() {
             placeholder="New project name..."
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
+            disabled={atProjectLimit}
           />
-          <button className="btn btn-primary" type="submit" disabled={creating}>
+          <button className="btn btn-primary" type="submit" disabled={creating || atProjectLimit}>
             {creating ? "Creating..." : "Create project"}
           </button>
         </form>
+        {atProjectLimit && (
+          <p style={{ fontSize: 13, color: "var(--slate-500)", marginTop: 8 }}>
+            You&apos;re using {ownedProjectsCount} of {planLimits.maxProjects} projects on the{" "}
+            {planLimits.label} plan. <Link href="/account">Upgrade</Link> to create more.
+          </p>
+        )}
         {createError && (
           <p style={{ color: "var(--red)", fontSize: 13, marginTop: 8 }}>{createError}</p>
         )}

@@ -21,6 +21,7 @@ import { db } from "../../../lib/firebase";
 import { useAuth } from "../../../lib/useAuth";
 import { inviteTeammate, resendInvite, markInviteStatus } from "../../../lib/invites";
 import { notifyAssignment } from "../../../lib/notifications";
+import { limitsForPlan } from "../../../lib/planLimits";
 
 const COLUMNS = [
   { key: "todo", label: "To Do" },
@@ -114,6 +115,7 @@ function ProjectBoardPageInner() {
   const [newComment, setNewComment] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
   const [activity, setActivity] = useState([]);
+  const [ownerProfile, setOwnerProfile] = useState(null);
 
   useEffect(() => {
     if (loading) return;
@@ -198,6 +200,21 @@ function ProjectBoardPageInner() {
       cancelled = true;
     };
   }, [project]);
+
+  // The member cap is tied to the project OWNER's plan (see
+  // memberLimitForPlan in sprintora-firestore-rules.txt, which is the
+  // actual enforcement — this is just so the UI can show an accurate count
+  // and a friendly message before someone hits a raw permission error).
+  useEffect(() => {
+    if (!project?.ownerId) {
+      setOwnerProfile(null);
+      return;
+    }
+    const unsub = onSnapshot(doc(db, "users", project.ownerId), (snap) => {
+      setOwnerProfile(snap.exists() ? snap.data() : null);
+    });
+    return () => unsub();
+  }, [project?.ownerId]);
 
   useEffect(() => {
     // Only the owner ever sees this (gated below in the JSX too), and every
@@ -427,6 +444,15 @@ function ProjectBoardPageInner() {
     e.preventDefault();
     setInviteMsg("");
     if (!inviteEmail.trim()) return;
+    // Friendly pre-check only — the real enforcement is in the Firestore
+    // rules (memberLimitForPlan), which would otherwise reject this write
+    // with a raw permission-denied error and no explanation.
+    if (atMemberLimit) {
+      setInviteMsg(
+        `This project is at the ${memberLimits.maxMembers}-member limit for the ${memberLimits.label} plan. The project owner needs to upgrade to add more people.`
+      );
+      return;
+    }
     setInviteBusy(true);
     try {
       const result = await inviteTeammate({
@@ -557,6 +583,8 @@ function ProjectBoardPageInner() {
     return <div className="loading-screen">You don&apos;t have access to this project.</div>;
   }
   const isOwner = project.ownerId === user.uid;
+  const memberLimits = limitsForPlan(ownerProfile?.plan);
+  const atMemberLimit = members.length >= memberLimits.maxMembers;
 
   return (
     <div className="app-shell">
@@ -664,14 +692,25 @@ function ProjectBoardPageInner() {
           <div className="team-panel">
             {isOwner && (
               <>
+                <p style={{ fontSize: 13, color: "var(--slate-500)", marginBottom: 10 }}>
+                  {members.length} of {memberLimits.maxMembers} members used on the{" "}
+                  {memberLimits.label} plan.
+                  {atMemberLimit && (
+                    <>
+                      {" "}
+                      <Link href="/account">Upgrade</Link> to add more.
+                    </>
+                  )}
+                </p>
                 <form className="invite-form" onSubmit={handleInvite}>
                   <input
                     type="email"
                     placeholder="teammate@company.com"
                     value={inviteEmail}
                     onChange={(e) => setInviteEmail(e.target.value)}
+                    disabled={atMemberLimit}
                   />
-                  <button className="btn btn-primary" type="submit" disabled={inviteBusy}>
+                  <button className="btn btn-primary" type="submit" disabled={inviteBusy || atMemberLimit}>
                     {inviteBusy ? "Inviting..." : "Invite"}
                   </button>
                 </form>
