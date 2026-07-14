@@ -244,6 +244,26 @@ git commit -m "Add Sentry coverage to cron routes"
 git push
 ```
 
+## Session: DIY backup export, no Blaze required (2026-07-14, same day, decision resolved)
+
+User's stated reason to resolve #43 now rather than defer further: **trial partner access is imminent** — real user data is about to exist, not hypothetical. That changes the calculus from "wait until it matters" to "it's about to matter."
+
+Rather than upgrade to Blaze (see the earlier tradeoff writeup above — Blaze itself isn't a guaranteed bill, but it removes Spark's hard usage cap in exchange for pay-as-you-go with no spending cap, a real tradeoff not worth taking on yet at pilot scale), built a DIY export instead:
+
+- **New file: `app/api/cron/backup-export/route.js`.** Daily Vercel Cron job (added to `vercel.json`, `0 3 * * *` — 3am UTC, off-peak from the other two crons). Walks every collection via the Admin SDK — `users`, `invites`, and every project's full tree (`projects` → each project's `tasks` → each task's `comments` and `activity`) — serializes Firestore Timestamps to ISO strings, and emails the whole thing as a JSON attachment via the same Gmail SMTP account already used for invite/reminder emails. **Zero new services, zero new env vars** — reuses `CRON_SECRET`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, and `FIREBASE_SERVICE_ACCOUNT_JSON`, all already configured.
+- **This is a data dump, not a restore tool.** There's no "import this JSON back into Firestore" script — if a real restore is ever needed, the most recent emailed backup is the source of truth to write a one-off import script against at that time, not something built speculatively now.
+- **Guardrail**: if the JSON exceeds ~20MB (Gmail's attachment limit is ~25MB), the route logs an error and sends a Sentry warning instead of silently truncating — a corrupted "successful" backup would be worse than an honest failure.
+- **Real limitations, stated plainly**: no point-in-time consistency guarantee (a live write mid-export could theoretically land inconsistently, unlike a real managed export) — acceptable at pilot scale with low write concurrency, not something to rely on at real scale. Also worth noting: this puts a full copy of user data (emails, names, task content, Paystack customer/subscription codes — no card numbers, those never touch this app at all) into the account owner's own Gmail inbox daily, in addition to Firestore. Not a new third party (it's the account owner's own inbox), but it is a second place the data now lives — worth keeping in mind for the NDPA data-handling questions already flagged for the lawyer.
+- **Not yet verified**: this cron hasn't run for real yet (first scheduled run is at the next 3am UTC after deploy). Worth checking your inbox the next morning to confirm the email actually arrived with a real attachment, not just that the route returned `ok: true`.
+
+Deploy command:
+```
+cd "C:\Users\USER\Documents\AI\sprintora-app"
+git add -A
+git commit -m "Add DIY Firestore backup export via email, no Blaze plan required"
+git push
+```
+
 ## Session: bus-factor documentation (2026-07-14, same day, continued while user was away)
 
 New file: **`HANDBOOK.md`** (repo root) — a from-scratch technical reference distinct from this brief. This brief is a chronological session log (great for "what happened and why," hard to skim as "how do I actually work on this app today"); the handbook is the opposite — a current-state map for anyone (including the user, months from now) picking this codebase up cold. Covers: architecture map (verified against the real file tree, not memory), where each piece of infrastructure actually lives and who can access it, env var inventory (names only, no values), how deploys work, biggest real risks in priority order, and an explicit "if you're picking this up cold" pointer back to this brief for the "why." Doesn't duplicate the brief's history.

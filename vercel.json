@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/trial-expiry",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/backup-export",
+      "schedule": "0 3 * * *"
     }
   ]
 }
